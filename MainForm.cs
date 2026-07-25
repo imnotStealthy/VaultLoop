@@ -71,7 +71,7 @@ internal sealed class MainForm : Form
         ClientSize = new Size(780, 520);
         BackColor = Palette.Cream;
         ForeColor = Palette.Ink;
-        Font = new Font("Bahnschrift", 10F, FontStyle.Regular);
+        Font = Typography.Body;
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
         KeyPreview = true;
@@ -98,9 +98,9 @@ internal sealed class MainForm : Form
         };
         Controls.Add(headerLogo);
         Controls.Add(MakeLabel("VAULTLOOP / NO-SAVE", new Rectangle(143, 83, 485, 42),
-            new Font("Impact", 26F), Palette.Yellow));
+            Typography.ProductTitle, Palette.Yellow));
         Controls.Add(MakeLabel("ROCKSTAR CLOUD CONTROL",
-            new Rectangle(145, 126, 480, 22), new Font("Consolas", 10F, FontStyle.Bold), Palette.Yellow));
+            new Rectangle(145, 126, 480, 22), Typography.MonoCaption, Palette.Yellow));
         var guideButton = MakeActionButton("HOW TO USE", new Rectangle(632, 91, 100, 42), Palette.Ink, Palette.Paper);
         guideButton.AccessibleName = "Open the no-save instruction guide";
         guideButton.Click += (_, _) =>
@@ -111,9 +111,9 @@ internal sealed class MainForm : Form
         Controls.Add(guideButton);
 
         Controls.Add(MakeLabel("NO-SAVE MODE", new Rectangle(55, 222, 310, 32),
-            new Font("Bahnschrift", 18F, FontStyle.Bold), Palette.Paper));
+            Typography.SectionTitle, Palette.Paper));
         Controls.Add(MakeLabel("Toggle the Rockstar link without cutting the rest of your network.",
-            new Rectangle(56, 258, 320, 44), new Font("Bahnschrift", 10F), Palette.Paper));
+            new Rectangle(56, 258, 320, 44), Typography.Body, Palette.Paper));
 
         _toggle = new BooleanToggle
         {
@@ -126,15 +126,15 @@ internal sealed class MainForm : Form
         Controls.Add(_toggle);
 
         _stateKicker = MakeLabel("STATUS", new Rectangle(458, 264, 218, 18),
-            new Font("Consolas", 9F, FontStyle.Bold), Palette.Acid);
+            Typography.CompactMono, Palette.Acid);
         _stateTitle = MakeLabel("", new Rectangle(458, 286, 220, 36),
-            new Font("Impact", 23F), Palette.Acid);
+            Typography.StatusTitle, Palette.Acid);
         _stateDetail = MakeLabel("", new Rectangle(458, 326, 220, 22),
-            new Font("Bahnschrift", 9F, FontStyle.Bold), Palette.Acid);
+            Typography.StatusDetail, Palette.Acid);
         Controls.AddRange([_stateKicker, _stateTitle, _stateDetail]);
 
         _shortcutFooter = MakeTextButton($"{ShortcutText}  //  GTA ONLY",
-            new Rectangle(44, 454, 370, 34), new Font("Consolas", 10F, FontStyle.Bold),
+            new Rectangle(44, 454, 370, 34), Typography.MonoCaption,
             Palette.Ink, Palette.Paper);
         _shortcutFooter.AccessibleName = "Configure the GTA-only keyboard shortcut";
         _shortcutFooter.Click += (_, _) => ConfigureShortcut();
@@ -142,7 +142,7 @@ internal sealed class MainForm : Form
         var adminReady = _previewMode || IsRunningAsAdministrator();
         _gameStatusLabel = MakeLabel(
             adminReady ? "WAITING FOR GTA  //  SAFE RESTORE" : "ADMIN REQUIRED",
-            new Rectangle(466, 458, 257, 24), new Font("Consolas", 8.5F, FontStyle.Bold), Palette.Ink,
+            new Rectangle(466, 458, 257, 24), Typography.TinyMono, Palette.Ink,
             adminReady ? Palette.Yellow : Palette.HotPink, ContentAlignment.MiddleCenter);
         Controls.Add(_gameStatusLabel);
 
@@ -245,15 +245,15 @@ internal sealed class MainForm : Form
             TabStop = false
         };
         var title = MakeLabel("VAULTLOOP", new Rectangle(58, 7, 280, 34),
-            new Font("Bahnschrift", 11F, FontStyle.Bold), Palette.Ink, Palette.Paper);
+            Typography.WindowTitle, Palette.Ink, Palette.Paper);
         var theme = MakeTextButton(_darkMode ? "LIGHT THEME" : "DARK THEME",
-            new Rectangle(408, 10, 130, 28), new Font("Consolas", 8.5F, FontStyle.Bold),
+            new Rectangle(408, 10, 130, 28), Typography.TinyMono,
             Palette.Blue, Palette.Ink);
         theme.Name = "ThemeButton";
         theme.AccessibleName = _darkMode ? "Switch to light theme" : "Switch to dark theme";
         theme.Click += (_, _) => ToggleTheme();
         var shortcut = MakeTextButton(ShortcutText, new Rectangle(548, 10, 104, 28),
-            new Font("Consolas", 9F, FontStyle.Bold), Palette.Acid, Palette.Ink);
+            Typography.CompactMono, Palette.Acid, Palette.Ink);
         shortcut.Name = "ShortcutBadge";
         shortcut.AccessibleName = "Configure keyboard shortcut";
         shortcut.Click += (_, _) => ConfigureShortcut();
@@ -281,7 +281,7 @@ internal sealed class MainForm : Form
             BackColor = Palette.Ink,
             ForeColor = Palette.Paper,
             FlatStyle = FlatStyle.Flat,
-            Font = new Font("Bahnschrift", 11F, FontStyle.Bold),
+            Font = Typography.WindowTitle,
             TabStop = true,
             UseVisualStyleBackColor = false,
             Cursor = Cursors.Hand
@@ -325,7 +325,7 @@ internal sealed class MainForm : Form
             BackColor = backColor,
             ForeColor = foreColor,
             FlatStyle = FlatStyle.Flat,
-            Font = new Font("Bahnschrift", 8F, FontStyle.Bold),
+            Font = Typography.ActionButton,
             Cursor = Cursors.Hand,
             UseVisualStyleBackColor = false
         };

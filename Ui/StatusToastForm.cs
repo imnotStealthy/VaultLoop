@@ -27,7 +27,7 @@ internal sealed class StatusToastForm : Form
             Bounds = new Rectangle(18, 12, 324, 30),
             BackColor = Palette.Ink,
             ForeColor = accent,
-            Font = new Font("Impact", 18F),
+            Font = Typography.AccentTitle,
             TextAlign = ContentAlignment.MiddleLeft
         });
         Controls.Add(new Label
@@ -36,7 +36,7 @@ internal sealed class StatusToastForm : Form
             Bounds = new Rectangle(20, 45, 320, hasDetail ? 54 : 26),
             BackColor = Palette.Ink,
             ForeColor = Palette.Paper,
-            Font = new Font("Bahnschrift", 8.5F, FontStyle.Bold),
+            Font = Typography.SmallBold,
             AutoEllipsis = true
         });
 

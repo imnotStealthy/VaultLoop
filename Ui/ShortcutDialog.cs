@@ -24,7 +24,7 @@ internal sealed class ShortcutDialog : BrutalistDialog
         {
             Text = "KEYBOARD SHORTCUT",
             Bounds = new Rectangle(28, 60, 360, 34),
-            Font = new Font("Impact", 20F),
+            Font = Typography.DialogHeading,
             BackColor = canvas,
             ForeColor = textColor
         });
@@ -44,7 +44,7 @@ internal sealed class ShortcutDialog : BrutalistDialog
         _capturedButton.AccessibleName = "Keyboard shortcut capture field";
         _capturedButton.AccessibleDescription =
             "Focus this control and press the shortcut you want to use.";
-        _capturedButton.Font = new Font("Consolas", 16F, FontStyle.Bold);
+        _capturedButton.Font = Typography.ShortcutCapture;
         _capturedButton.KeyDown += CaptureShortcut;
         Controls.Add(_capturedButton);
 

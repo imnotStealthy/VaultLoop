@@ -24,7 +24,7 @@ internal sealed class GuideDialog : BrutalistDialog
             Bounds = new Rectangle(28, 58, 350, 38),
             BackColor = canvas,
             ForeColor = textColor,
-            Font = new Font("Impact", 22F)
+            Font = Typography.GuideTitle
         });
         Controls.Add(new Label
         {
@@ -32,14 +32,14 @@ internal sealed class GuideDialog : BrutalistDialog
             Bounds = new Rectangle(30, 93, 390, 22),
             BackColor = canvas,
             ForeColor = textColor,
-            Font = new Font("Bahnschrift", 9F)
+            Font = Typography.GuideHint
         });
         _currentStepLabel = new Label
         {
             Bounds = new Rectangle(520, 68, 168, 34),
             BackColor = Palette.Acid,
             ForeColor = Palette.Ink,
-            Font = new Font("Consolas", 9F, FontStyle.Bold),
+            Font = Typography.CompactMono,
             TextAlign = ContentAlignment.MiddleCenter
         };
         Controls.Add(_currentStepLabel);
@@ -124,7 +124,7 @@ internal sealed class GuideDialog : BrutalistDialog
             Bounds = new Rectangle(28, 510, 664, 48),
             BackColor = Palette.Blue,
             ForeColor = Palette.Ink,
-            Font = new Font("Bahnschrift", 8.5F, FontStyle.Bold),
+            Font = Typography.SmallBold,
             Padding = new Padding(14, 6, 14, 6)
         });
         Controls.Add(new Label
@@ -135,7 +135,7 @@ internal sealed class GuideDialog : BrutalistDialog
             Bounds = new Rectangle(28, 568, 664, 78),
             BackColor = Palette.AlertRed,
             ForeColor = Palette.Ink,
-            Font = new Font("Bahnschrift", 9F, FontStyle.Bold),
+            Font = Typography.StatusDetail,
             Padding = new Padding(14, 9, 14, 9)
         });
         var closeButton = CreateButton("GOT IT", new Rectangle(582, 654, 110, 36), Palette.Ink, Palette.Paper);
@@ -188,7 +188,7 @@ internal sealed class GuideDialog : BrutalistDialog
             Bounds = new Rectangle(0, 0, 58, 60),
             BackColor = Palette.Yellow,
             ForeColor = Palette.Ink,
-            Font = new Font("Impact", 18F),
+            Font = Typography.AccentTitle,
             TextAlign = ContentAlignment.MiddleCenter,
             Cursor = Cursors.Hand
         });
@@ -198,7 +198,7 @@ internal sealed class GuideDialog : BrutalistDialog
             Bounds = new Rectangle(72, 4, 565, 20),
             BackColor = panel.BackColor,
             ForeColor = textColor,
-            Font = new Font("Bahnschrift", 9.5F, FontStyle.Bold),
+            Font = Typography.GuideStepTitle,
             Cursor = Cursors.Hand
         });
         panel.Controls.Add(new Label
@@ -207,7 +207,7 @@ internal sealed class GuideDialog : BrutalistDialog
             Bounds = new Rectangle(72, 23, 576, 30),
             BackColor = panel.BackColor,
             ForeColor = textColor,
-            Font = new Font("Bahnschrift", 8.4F),
+            Font = Typography.GuideStepBody,
             Cursor = Cursors.Hand
         });
         return panel;

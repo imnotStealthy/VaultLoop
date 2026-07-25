@@ -13,7 +13,7 @@ internal abstract class BrutalistDialog : Form
         ClientSize = size;
         BackColor = background;
         ForeColor = background == Palette.DarkCanvas ? Palette.Paper : Palette.Ink;
-        Font = new Font("Bahnschrift", 10F);
+        Font = Typography.Body;
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterParent;
         ShowInTaskbar = false;
@@ -32,7 +32,7 @@ internal abstract class BrutalistDialog : Form
             Bounds = new Rectangle(16, 0, size.Width - 68, 44),
             BackColor = Palette.Ink,
             ForeColor = Palette.Paper,
-            Font = new Font("Bahnschrift", 10F, FontStyle.Bold),
+            Font = Typography.DialogTitleBar,
             TextAlign = ContentAlignment.MiddleLeft
         };
         var closeButton = CreateButton("X", new Rectangle(size.Width - 48, 0, 48, 44),
@@ -70,7 +70,7 @@ internal abstract class BrutalistDialog : Form
             BackColor = backColor,
             ForeColor = foreColor,
             FlatStyle = FlatStyle.Flat,
-            Font = new Font("Bahnschrift", 9F, FontStyle.Bold),
+            Font = Typography.StatusDetail,
             Cursor = Cursors.Hand,
             UseVisualStyleBackColor = false
         };

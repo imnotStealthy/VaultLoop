@@ -96,8 +96,8 @@ internal sealed class BooleanToggle : Control
             !IsStateKnown ? Palette.Yellow : Checked ? Palette.HotPink : Palette.Acid);
         using var knobBrush = new SolidBrush(Palette.Paper);
         using var borderPen = new Pen(Palette.Ink, 4F);
-        using var labelFont = new Font("Impact", 23F);
-        using var knobFont = new Font("Consolas", 9F, FontStyle.Bold);
+        var labelFont = Typography.StatusTitle;
+        var knobFont = Typography.CompactMono;
 
         e.Graphics.FillRectangle(shadowBrush, shadow);
         e.Graphics.FillRectangle(trackBrush, track);
