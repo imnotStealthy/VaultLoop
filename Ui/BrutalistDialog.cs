@@ -1,6 +1,5 @@
 using System;
 using System.Drawing;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace ReplayGlitchGTA;
@@ -85,14 +84,8 @@ internal abstract class BrutalistDialog : Form
         {
             return;
         }
-        ReleaseCapture();
-        SendMessage(Handle, 0x00A1, 0x0002, 0);
+        NativeMethods.ReleaseCapture();
+        NativeMethods.SendMessage(Handle, NativeMethods.NonClientLeftButtonDown,
+            NativeMethods.HitCaption, 0);
     }
-
-    [DllImport("user32.dll")]
-    private static extern bool ReleaseCapture();
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr SendMessage(IntPtr windowHandle, int message, int wordParameter,
-        int longParameter);
 }

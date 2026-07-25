@@ -14,17 +14,6 @@ namespace ReplayGlitchGTA;
 
 internal sealed class MainForm : Form
 {
-    private const int LowLevelKeyboardHook = 13;
-    private const int KeyDownMessage = 0x0100;
-    private const int KeyUpMessage = 0x0101;
-    private const int SystemKeyDownMessage = 0x0104;
-    private const int SystemKeyUpMessage = 0x0105;
-    private const uint LowerIntegrityInjectedFlag = 0x02;
-    private const uint InjectedFlag = 0x10;
-    private const uint AltDownFlag = 0x20;
-    private const int NonClientLeftButtonDown = 0x00A1;
-    private const int HitCaption = 0x0002;
-
     private readonly FirewallService? _firewall;
     private readonly BooleanToggle _toggle;
     private readonly Label _stateKicker;
@@ -33,7 +22,7 @@ internal sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly bool _previewMode;
     private readonly Image _logoImage;
-    private readonly LowLevelKeyboardProcedure _keyboardProcedure;
+    private readonly NativeMethods.LowLevelKeyboardProcedure _keyboardProcedure;
     private readonly Button _shortcutBadge;
     private readonly Button _shortcutFooter;
     private readonly Button _themeButton;
@@ -176,8 +165,9 @@ internal sealed class MainForm : Form
         base.OnHandleCreated(e);
         if (!_previewMode)
         {
-            _keyboardHook = SetWindowsHookEx(LowLevelKeyboardHook, _keyboardProcedure,
-                GetModuleHandle(null), 0);
+            _keyboardHook = NativeMethods.SetWindowsHookEx(
+                NativeMethods.LowLevelKeyboardHook, _keyboardProcedure,
+                NativeMethods.GetModuleHandle(null), 0);
             _hotkeyRegistered = _keyboardHook != IntPtr.Zero;
         }
     }
@@ -186,7 +176,7 @@ internal sealed class MainForm : Form
     {
         if (_keyboardHook != IntPtr.Zero)
         {
-            UnhookWindowsHookEx(_keyboardHook);
+            NativeMethods.UnhookWindowsHookEx(_keyboardHook);
             _keyboardHook = IntPtr.Zero;
             _hotkeyRegistered = false;
         }
@@ -344,8 +334,9 @@ internal sealed class MainForm : Form
         {
             return;
         }
-        ReleaseCapture();
-        SendMessage(Handle, NonClientLeftButtonDown, HitCaption, 0);
+        NativeMethods.ReleaseCapture();
+        NativeMethods.SendMessage(Handle, NativeMethods.NonClientLeftButtonDown,
+            NativeMethods.HitCaption, 0);
     }
 
     private void HandleShown(object? sender, EventArgs eventArgs)
@@ -363,16 +354,21 @@ internal sealed class MainForm : Form
     {
         if (code >= 0)
         {
-            var keyboardData = Marshal.PtrToStructure<LowLevelKeyboardData>(longParameter);
-            if ((keyboardData.Flags & (InjectedFlag | LowerIntegrityInjectedFlag)) != 0)
+            var keyboardData =
+                Marshal.PtrToStructure<NativeMethods.LowLevelKeyboardData>(longParameter);
+            if ((keyboardData.Flags &
+                 (NativeMethods.InjectedFlag | NativeMethods.LowerIntegrityInjectedFlag)) != 0)
             {
-                return CallNextHookEx(_keyboardHook, code, wordParameter, longParameter);
+                return NativeMethods.CallNextHookEx(
+                    _keyboardHook, code, wordParameter, longParameter);
             }
             if (!_capturingShortcut && keyboardData.VirtualKeyCode == (uint)_shortcutKey)
             {
                 var message = wordParameter.ToInt32();
-                var keyDown = message is KeyDownMessage or SystemKeyDownMessage;
-                var keyUp = message is KeyUpMessage or SystemKeyUpMessage;
+                var keyDown = message is
+                    NativeMethods.KeyDownMessage or NativeMethods.SystemKeyDownMessage;
+                var keyUp = message is
+                    NativeMethods.KeyUpMessage or NativeMethods.SystemKeyUpMessage;
                 var pressedModifiers = GetPressedModifiers(keyboardData.Flags);
                 var modifiersMatch = pressedModifiers == _shortcutModifiers;
 
@@ -399,21 +395,22 @@ internal sealed class MainForm : Form
                 }
             }
         }
-        return CallNextHookEx(_keyboardHook, code, wordParameter, longParameter);
+        return NativeMethods.CallNextHookEx(
+            _keyboardHook, code, wordParameter, longParameter);
     }
 
     private Keys GetPressedModifiers(uint flags)
     {
         var modifiers = Keys.None;
-        if ((flags & AltDownFlag) != 0)
+        if ((flags & NativeMethods.AltDownFlag) != 0)
         {
             modifiers |= Keys.Alt;
         }
-        if ((GetAsyncKeyState((int)Keys.ControlKey) & 0x8000) != 0)
+        if ((NativeMethods.GetAsyncKeyState((int)Keys.ControlKey) & 0x8000) != 0)
         {
             modifiers |= Keys.Control;
         }
-        if ((GetAsyncKeyState((int)Keys.ShiftKey) & 0x8000) != 0)
+        if ((NativeMethods.GetAsyncKeyState((int)Keys.ShiftKey) & 0x8000) != 0)
         {
             modifiers |= Keys.Shift;
         }
@@ -911,40 +908,4 @@ internal sealed class MainForm : Form
         internal Exception? FirewallError { get; set; }
     }
 
-    private delegate IntPtr LowLevelKeyboardProcedure(int code, IntPtr wordParameter,
-        IntPtr longParameter);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SetWindowsHookEx(int hookId, LowLevelKeyboardProcedure procedure,
-        IntPtr moduleHandle, uint threadId);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool UnhookWindowsHookEx(IntPtr hookHandle);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr CallNextHookEx(IntPtr hookHandle, int code, IntPtr wordParameter,
-        IntPtr longParameter);
-
-    [DllImport("user32.dll")]
-    private static extern short GetAsyncKeyState(int virtualKey);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern IntPtr GetModuleHandle(string? moduleName);
-
-    [DllImport("user32.dll")]
-    private static extern bool ReleaseCapture();
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr SendMessage(IntPtr windowHandle, int message, int wordParameter,
-        int longParameter);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct LowLevelKeyboardData
-    {
-        internal uint VirtualKeyCode;
-        internal uint ScanCode;
-        internal uint Flags;
-        internal uint Time;
-        internal UIntPtr ExtraInfo;
-    }
 }
