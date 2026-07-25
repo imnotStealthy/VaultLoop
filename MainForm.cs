@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -27,8 +26,7 @@ internal sealed class MainForm : Form
     private readonly Button _shortcutFooter;
     private readonly Button _themeButton;
     private readonly Label _gameStatusLabel;
-    private readonly Dictionary<Control, Color> _originalBackColors = new();
-    private readonly Dictionary<Control, Color> _originalForeColors = new();
+    private readonly ThemeController _themeController;
     private Color _stateColor = Palette.Acid;
     private Keys _shortcutKey;
     private Keys _shortcutModifiers;
@@ -149,8 +147,10 @@ internal sealed class MainForm : Form
         _refreshTimer.Tick += (_, _) => QueueRuntimeRefresh();
         FormClosing += HandleClosing;
         Shown += HandleShown;
-        CaptureThemeColors(this);
-        ApplyTheme();
+        _themeController = new ThemeController(
+            this, _themeButton, [_stateKicker, _stateTitle, _stateDetail, _toggle]);
+        _themeController.CaptureThemeColors();
+        _themeController.ApplyTheme(_darkMode);
 
         if (_previewMode)
         {
@@ -539,7 +539,7 @@ internal sealed class MainForm : Form
     private void ToggleTheme()
     {
         _darkMode = !_darkMode;
-        ApplyTheme();
+        _themeController.ApplyTheme(_darkMode);
         try
         {
             ThemeSettings.Save(_darkMode);
@@ -550,49 +550,6 @@ internal sealed class MainForm : Form
                 $"The theme changed for this session but could not be saved:\n{exception.Message}",
                 "Theme preference", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
-    }
-
-    private void CaptureThemeColors(Control parent)
-    {
-        foreach (Control control in parent.Controls)
-        {
-            if (!ReferenceEquals(control, _stateKicker) &&
-                !ReferenceEquals(control, _stateTitle) &&
-                !ReferenceEquals(control, _stateDetail) &&
-                !ReferenceEquals(control, _toggle))
-            {
-                _originalBackColors[control] = control.BackColor;
-                _originalForeColors[control] = control.ForeColor;
-            }
-            CaptureThemeColors(control);
-        }
-    }
-
-    private void ApplyTheme()
-    {
-        BackColor = _darkMode ? Palette.DarkCanvas : Palette.Cream;
-        ForeColor = _darkMode ? Palette.Paper : Palette.Ink;
-        foreach (var entry in _originalBackColors)
-        {
-            var originalBack = entry.Value;
-            var mappedBack = originalBack == Palette.Cream
-                ? (_darkMode ? Palette.DarkCanvas : Palette.Cream)
-                : originalBack == Palette.Paper
-                    ? (_darkMode ? Palette.DarkSurface : Palette.Paper)
-                    : originalBack;
-            entry.Key.BackColor = mappedBack;
-
-            var originalFore = _originalForeColors[entry.Key];
-            entry.Key.ForeColor = _darkMode && originalFore == Palette.Ink &&
-                                  (originalBack == Palette.Cream || originalBack == Palette.Paper)
-                ? Palette.Paper
-                : originalFore;
-        }
-        _themeButton.Text = _darkMode ? "LIGHT THEME" : "DARK THEME";
-        _themeButton.AccessibleName = _darkMode
-            ? "Switch to light theme"
-            : "Switch to dark theme";
-        Invalidate(true);
     }
 
     private void ToggleState(bool fromHotkey = false)
