@@ -4,7 +4,6 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Threading;
 using System.Windows.Forms;
@@ -21,28 +20,21 @@ internal sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly bool _previewMode;
     private readonly Image _logoImage;
-    private readonly NativeMethods.LowLevelKeyboardProcedure _keyboardProcedure;
+    private readonly GlobalHotkeyHook _hotkeyHook;
     private readonly Button _shortcutBadge;
     private readonly Button _shortcutFooter;
     private readonly Button _themeButton;
     private readonly Label _gameStatusLabel;
     private readonly ThemeController _themeController;
     private Color _stateColor = Palette.Acid;
-    private Keys _shortcutKey;
-    private Keys _shortcutModifiers;
     private bool _applying;
-    private bool _capturingShortcut;
     private bool _darkMode;
     private bool _stateKnown = true;
     private bool _hotkeyRegistered;
-    private bool _shortcutDown;
-    private bool _gameHotkeyReady;
     private int _runtimeRefreshInProgress;
     private int _runtimeRefreshVersion;
     private FirewallRuleState _firewallState = FirewallRuleState.Inactive;
     private string? _verifiedGamePath;
-    private IntPtr _keyboardHook;
-    private long _verifiedGameWindow;
 
     internal MainForm(FirewallService? firewall, bool previewMode = false,
         bool previewState = false, bool previewUnknown = false)
@@ -50,8 +42,10 @@ internal sealed class MainForm : Form
         _firewall = firewall;
         _previewMode = previewMode;
         _logoImage = LoadLogo();
-        _keyboardProcedure = KeyboardHookCallback;
-        (_shortcutModifiers, _shortcutKey) = ShortcutSettings.Load();
+        var shortcut = ShortcutSettings.Load();
+        _hotkeyHook = new GlobalHotkeyHook(
+            shortcut.Modifiers, shortcut.Key, () => !_applying && _stateKnown);
+        _hotkeyHook.Pressed += HandleHotkeyPressed;
         _darkMode = ThemeSettings.Load();
 
         Text = "VaultLoop";
@@ -175,19 +169,15 @@ internal sealed class MainForm : Form
         base.OnHandleCreated(e);
         if (!_previewMode)
         {
-            _keyboardHook = NativeMethods.SetWindowsHookEx(
-                NativeMethods.LowLevelKeyboardHook, _keyboardProcedure,
-                NativeMethods.GetModuleHandle(null), 0);
-            _hotkeyRegistered = _keyboardHook != IntPtr.Zero;
+            _hotkeyRegistered = _hotkeyHook.Install();
         }
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
-        if (_keyboardHook != IntPtr.Zero)
+        if (!_previewMode)
         {
-            NativeMethods.UnhookWindowsHookEx(_keyboardHook);
-            _keyboardHook = IntPtr.Zero;
+            _hotkeyHook.Uninstall();
             _hotkeyRegistered = false;
         }
         base.OnHandleDestroyed(e);
@@ -305,71 +295,12 @@ internal sealed class MainForm : Form
         }
     }
 
-    private IntPtr KeyboardHookCallback(int code, IntPtr wordParameter, IntPtr longParameter)
+    private void HandleHotkeyPressed(object? sender, EventArgs eventArgs)
     {
-        if (code >= 0)
+        if (!IsDisposed && IsHandleCreated)
         {
-            var keyboardData =
-                Marshal.PtrToStructure<NativeMethods.LowLevelKeyboardData>(longParameter);
-            if ((keyboardData.Flags &
-                 (NativeMethods.InjectedFlag | NativeMethods.LowerIntegrityInjectedFlag)) != 0)
-            {
-                return NativeMethods.CallNextHookEx(
-                    _keyboardHook, code, wordParameter, longParameter);
-            }
-            if (!_capturingShortcut && keyboardData.VirtualKeyCode == (uint)_shortcutKey)
-            {
-                var message = wordParameter.ToInt32();
-                var keyDown = message is
-                    NativeMethods.KeyDownMessage or NativeMethods.SystemKeyDownMessage;
-                var keyUp = message is
-                    NativeMethods.KeyUpMessage or NativeMethods.SystemKeyUpMessage;
-                var pressedModifiers = GetPressedModifiers(keyboardData.Flags);
-                var modifiersMatch = pressedModifiers == _shortcutModifiers;
-
-                var canTrigger = keyDown && modifiersMatch &&
-                                  Volatile.Read(ref _gameHotkeyReady) &&
-                                  GameProcessService.IsCurrentForegroundWindow(
-                                      new IntPtr(Interlocked.Read(ref _verifiedGameWindow))) &&
-                                  !_applying && _stateKnown;
-                if (canTrigger || (keyUp && _shortcutDown))
-                {
-                    if (keyDown && !_shortcutDown)
-                    {
-                        _shortcutDown = true;
-                        if (!IsDisposed && IsHandleCreated)
-                        {
-                            BeginInvoke(new Action(() => ToggleState(fromHotkey: true)));
-                        }
-                    }
-                    else if (keyUp)
-                    {
-                        _shortcutDown = false;
-                    }
-                    return (IntPtr)1;
-                }
-            }
+            BeginInvoke(new Action(() => ToggleState(fromHotkey: true)));
         }
-        return NativeMethods.CallNextHookEx(
-            _keyboardHook, code, wordParameter, longParameter);
-    }
-
-    private Keys GetPressedModifiers(uint flags)
-    {
-        var modifiers = Keys.None;
-        if ((flags & NativeMethods.AltDownFlag) != 0)
-        {
-            modifiers |= Keys.Alt;
-        }
-        if ((NativeMethods.GetAsyncKeyState((int)Keys.ControlKey) & 0x8000) != 0)
-        {
-            modifiers |= Keys.Control;
-        }
-        if ((NativeMethods.GetAsyncKeyState((int)Keys.ShiftKey) & 0x8000) != 0)
-        {
-            modifiers |= Keys.Shift;
-        }
-        return modifiers;
     }
 
     private void RefreshRuntimeState(bool showErrors = false)
@@ -387,8 +318,7 @@ internal sealed class MainForm : Form
         }
 
         var version = Interlocked.Increment(ref _runtimeRefreshVersion);
-        Volatile.Write(ref _gameHotkeyReady, false);
-        Interlocked.Exchange(ref _verifiedGameWindow, 0);
+        _hotkeyHook.Disarm();
         ThreadPool.QueueUserWorkItem(_ =>
         {
             try
@@ -448,15 +378,13 @@ internal sealed class MainForm : Form
         if (snapshot.ForegroundPath is not null)
         {
             _verifiedGamePath = snapshot.ForegroundPath;
-            Interlocked.Exchange(ref _verifiedGameWindow, snapshot.ForegroundWindow.ToInt64());
-            Volatile.Write(ref _gameHotkeyReady, true);
+            _hotkeyHook.Arm(snapshot.ForegroundWindow);
             _gameStatusLabel.Text = "GTA READY  //  SAFE RESTORE";
             _gameStatusLabel.BackColor = Palette.Acid;
         }
         else
         {
-            Volatile.Write(ref _gameHotkeyReady, false);
-            Interlocked.Exchange(ref _verifiedGameWindow, 0);
+            _hotkeyHook.Disarm();
             _verifiedGamePath = snapshot.RunningPath;
             _gameStatusLabel.Text = snapshot.RunningPath is null
                 ? "WAITING FOR GTA"
@@ -476,14 +404,12 @@ internal sealed class MainForm : Form
 
     private void RefreshGameContext()
     {
-        Volatile.Write(ref _gameHotkeyReady, false);
-        Interlocked.Exchange(ref _verifiedGameWindow, 0);
+        _hotkeyHook.Disarm();
         if (GameProcessService.TryGetVerifiedForegroundGame(
                 out var foregroundPath, out var foregroundWindow))
         {
             _verifiedGamePath = foregroundPath;
-            Interlocked.Exchange(ref _verifiedGameWindow, foregroundWindow.ToInt64());
-            Volatile.Write(ref _gameHotkeyReady, true);
+            _hotkeyHook.Arm(foregroundWindow);
             _gameStatusLabel.Text = "GTA READY  //  SAFE RESTORE";
             _gameStatusLabel.BackColor = Palette.Acid;
             return;
@@ -503,14 +429,23 @@ internal sealed class MainForm : Form
         }
     }
 
-    private string ShortcutText => ShortcutSettings.Format(_shortcutModifiers, _shortcutKey);
+    private string ShortcutText
+    {
+        get
+        {
+            var shortcut = _hotkeyHook.Shortcut;
+            return ShortcutSettings.Format(shortcut.Modifiers, shortcut.Key);
+        }
+    }
 
     private void ConfigureShortcut()
     {
-        _capturingShortcut = true;
+        _hotkeyHook.CapturingShortcut = true;
         try
         {
-            using var dialog = new ShortcutDialog(_shortcutModifiers, _shortcutKey, _darkMode);
+            var shortcut = _hotkeyHook.Shortcut;
+            using var dialog = new ShortcutDialog(
+                shortcut.Modifiers, shortcut.Key, _darkMode);
             if (dialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
@@ -519,9 +454,7 @@ internal sealed class MainForm : Form
             var newModifiers = dialog.ShortcutModifiers;
             var newKey = dialog.ShortcutKey;
             ShortcutSettings.Save(newModifiers, newKey);
-            _shortcutModifiers = newModifiers;
-            _shortcutKey = newKey;
-            _shortcutDown = false;
+            _hotkeyHook.Shortcut = (newModifiers, newKey);
             _shortcutBadge.Text = ShortcutText;
             _shortcutFooter.Text = $"{ShortcutText}  //  GTA ONLY";
         }
@@ -532,7 +465,7 @@ internal sealed class MainForm : Form
         }
         finally
         {
-            _capturingShortcut = false;
+            _hotkeyHook.CapturingShortcut = false;
         }
     }
 
@@ -588,8 +521,7 @@ internal sealed class MainForm : Form
                     }
                     gamePath = foregroundPath;
                     _verifiedGamePath = foregroundPath;
-                    Interlocked.Exchange(
-                        ref _verifiedGameWindow, foregroundWindow.ToInt64());
+                    _hotkeyHook.Arm(foregroundWindow);
                 }
                 else if (GameProcessService.TryFindVerifiedRunningGame(out var runningPath))
                 {
