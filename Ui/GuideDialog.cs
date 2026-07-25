@@ -11,13 +11,13 @@ internal sealed class GuideDialog : BrutalistDialog
     private readonly bool _darkMode;
 
     internal GuideDialog(bool darkMode) :
-        base("HOW TO USE NO-SAVE", GetGuideSize(), darkMode ? DarkCanvas : Paper)
+        base("HOW TO USE NO-SAVE", GetGuideSize(), darkMode ? Palette.DarkCanvas : Palette.Paper)
     {
         _darkMode = darkMode;
         AutoScroll = true;
         AutoScrollMinSize = new Size(0, 700);
-        var canvas = darkMode ? DarkCanvas : Paper;
-        var textColor = darkMode ? Paper : Ink;
+        var canvas = darkMode ? Palette.DarkCanvas : Palette.Paper;
+        var textColor = darkMode ? Palette.Paper : Palette.Ink;
         Controls.Add(new Label
         {
             Text = "VAULTLOOP WORKFLOW",
@@ -37,8 +37,8 @@ internal sealed class GuideDialog : BrutalistDialog
         _currentStepLabel = new Label
         {
             Bounds = new Rectangle(520, 68, 168, 34),
-            BackColor = Acid,
-            ForeColor = Ink,
+            BackColor = Palette.Acid,
+            ForeColor = Palette.Ink,
             Font = new Font("Consolas", 9F, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleCenter
         };
@@ -122,8 +122,8 @@ internal sealed class GuideDialog : BrutalistDialog
                    "Group heists: 48 minutes. Solo Cayo Perico: 144 minutes. " +
                    "Other activities may use a different timer.",
             Bounds = new Rectangle(28, 510, 664, 48),
-            BackColor = Blue,
-            ForeColor = Ink,
+            BackColor = Palette.Blue,
+            ForeColor = Palette.Ink,
             Font = new Font("Bahnschrift", 8.5F, FontStyle.Bold),
             Padding = new Padding(14, 6, 14, 6)
         });
@@ -133,12 +133,12 @@ internal sealed class GuideDialog : BrutalistDialog
                    "Online exploits may cause progress loss, transaction rollback, suspension, or account sanctions. " +
                    "The perceived risk may be low, but no method is completely risk-free.",
             Bounds = new Rectangle(28, 568, 664, 78),
-            BackColor = AlertRed,
-            ForeColor = Ink,
+            BackColor = Palette.AlertRed,
+            ForeColor = Palette.Ink,
             Font = new Font("Bahnschrift", 9F, FontStyle.Bold),
             Padding = new Padding(14, 9, 14, 9)
         });
-        var closeButton = CreateButton("GOT IT", new Rectangle(582, 654, 110, 36), Ink, Paper);
+        var closeButton = CreateButton("GOT IT", new Rectangle(582, 654, 110, 36), Palette.Ink, Palette.Paper);
         closeButton.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
         Controls.Add(closeButton);
         AcceptButton = closeButton;
@@ -168,8 +168,8 @@ internal sealed class GuideDialog : BrutalistDialog
         int number, string title, string description, Rectangle bounds,
         bool darkMode)
     {
-        var neutral = darkMode ? DarkSurface : Color.FromArgb(246, 242, 228);
-        var textColor = darkMode ? Paper : Ink;
+        var neutral = darkMode ? Palette.DarkSurface : Palette.GuideNeutral;
+        var textColor = darkMode ? Palette.Paper : Palette.Ink;
         var panel = new GuideStepPanel
         {
             Bounds = bounds,
@@ -186,8 +186,8 @@ internal sealed class GuideDialog : BrutalistDialog
         {
             Text = number.ToString("00"),
             Bounds = new Rectangle(0, 0, 58, 60),
-            BackColor = Yellow,
-            ForeColor = Ink,
+            BackColor = Palette.Yellow,
+            ForeColor = Palette.Ink,
             Font = new Font("Impact", 18F),
             TextAlign = ContentAlignment.MiddleCenter,
             Cursor = Cursors.Hand
@@ -219,15 +219,15 @@ internal sealed class GuideDialog : BrutalistDialog
         for (var index = 0; index < _steps.Length; index++)
         {
             var color = index == step - 1
-                ? Acid
-                : _darkMode ? DarkSurface : Color.FromArgb(246, 242, 228);
+                ? Palette.Acid
+                : _darkMode ? Palette.DarkSurface : Palette.GuideNeutral;
             _steps[index].IsCurrent = index == step - 1;
             _steps[index].BackColor = color;
             for (var childIndex = 1; childIndex < _steps[index].Controls.Count; childIndex++)
             {
                 _steps[index].Controls[childIndex].BackColor = color;
                 _steps[index].Controls[childIndex].ForeColor =
-                    index == step - 1 || !_darkMode ? Ink : Paper;
+                    index == step - 1 || !_darkMode ? Palette.Ink : Palette.Paper;
             }
         }
         if (persist)

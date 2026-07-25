@@ -12,13 +12,13 @@ internal sealed class ShortcutDialog : BrutalistDialog
 
     internal ShortcutDialog(Keys modifiers, Keys key, bool darkMode) :
         base("CONFIGURE SHORTCUT", new Size(430, 280),
-            darkMode ? DarkCanvas : Yellow)
+            darkMode ? Palette.DarkCanvas : Palette.Yellow)
     {
         ShortcutModifiers = modifiers;
         ShortcutKey = key;
         KeyPreview = false;
-        var canvas = darkMode ? DarkCanvas : Yellow;
-        var textColor = darkMode ? Paper : Ink;
+        var canvas = darkMode ? Palette.DarkCanvas : Palette.Yellow;
+        var textColor = darkMode ? Palette.Paper : Palette.Ink;
 
         Controls.Add(new Label
         {
@@ -38,8 +38,8 @@ internal sealed class ShortcutDialog : BrutalistDialog
 
         _capturedButton = CreateButton(ShortcutSettings.Format(modifiers, key),
             new Rectangle(30, 144, 370, 52),
-            darkMode ? DarkSurface : Paper,
-            darkMode ? Paper : Ink);
+            darkMode ? Palette.DarkSurface : Palette.Paper,
+            darkMode ? Palette.Paper : Palette.Ink);
         _capturedButton.Name = "ShortcutCapture";
         _capturedButton.AccessibleName = "Keyboard shortcut capture field";
         _capturedButton.AccessibleDescription =
@@ -48,11 +48,11 @@ internal sealed class ShortcutDialog : BrutalistDialog
         _capturedButton.KeyDown += CaptureShortcut;
         Controls.Add(_capturedButton);
 
-        var secondaryColor = darkMode ? DarkSurface : Paper;
-        var secondaryText = darkMode ? Paper : Ink;
+        var secondaryColor = darkMode ? Palette.DarkSurface : Palette.Paper;
+        var secondaryText = darkMode ? Palette.Paper : Palette.Ink;
         var resetButton = CreateButton("RESET", new Rectangle(30, 218, 86, 36),
             secondaryColor, secondaryText);
-        var saveButton = CreateButton("SAVE", new Rectangle(220, 218, 84, 36), Acid, Ink);
+        var saveButton = CreateButton("SAVE", new Rectangle(220, 218, 84, 36), Palette.Acid, Palette.Ink);
         var cancelButton = CreateButton("CANCEL", new Rectangle(314, 218, 86, 36),
             secondaryColor, secondaryText);
         resetButton.Click += (_, _) =>

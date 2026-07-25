@@ -14,16 +14,6 @@ namespace ReplayGlitchGTA;
 
 internal sealed class MainForm : Form
 {
-    private static readonly Color Ink = Color.FromArgb(17, 17, 17);
-    private static readonly Color Cream = Color.FromArgb(255, 246, 218);
-    private static readonly Color Paper = Color.FromArgb(255, 253, 245);
-    private static readonly Color Yellow = Color.FromArgb(255, 215, 56);
-    private static readonly Color Blue = Color.FromArgb(91, 134, 255);
-    private static readonly Color Acid = Color.FromArgb(185, 255, 61);
-    private static readonly Color HotPink = Color.FromArgb(255, 83, 112);
-    private static readonly Color DarkCanvas = Color.FromArgb(20, 20, 20);
-    private static readonly Color DarkSurface = Color.FromArgb(34, 34, 34);
-
     private const int LowLevelKeyboardHook = 13;
     private const int KeyDownMessage = 0x0100;
     private const int KeyUpMessage = 0x0101;
@@ -50,7 +40,7 @@ internal sealed class MainForm : Form
     private readonly Label _gameStatusLabel;
     private readonly Dictionary<Control, Color> _originalBackColors = new();
     private readonly Dictionary<Control, Color> _originalForeColors = new();
-    private Color _stateColor = Acid;
+    private Color _stateColor = Palette.Acid;
     private Keys _shortcutKey;
     private Keys _shortcutModifiers;
     private bool _applying;
@@ -79,8 +69,8 @@ internal sealed class MainForm : Form
 
         Text = "VaultLoop";
         ClientSize = new Size(780, 520);
-        BackColor = Cream;
-        ForeColor = Ink;
+        BackColor = Palette.Cream;
+        ForeColor = Palette.Ink;
         Font = new Font("Bahnschrift", 10F, FontStyle.Regular);
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
@@ -103,15 +93,15 @@ internal sealed class MainForm : Form
             Bounds = new Rectangle(49, 81, 76, 76),
             Image = _logoImage,
             SizeMode = PictureBoxSizeMode.Zoom,
-            BackColor = Yellow,
+            BackColor = Palette.Yellow,
             TabStop = false
         };
         Controls.Add(headerLogo);
         Controls.Add(MakeLabel("VAULTLOOP / NO-SAVE", new Rectangle(143, 83, 485, 42),
-            new Font("Impact", 26F), Yellow));
+            new Font("Impact", 26F), Palette.Yellow));
         Controls.Add(MakeLabel("ROCKSTAR CLOUD CONTROL",
-            new Rectangle(145, 126, 480, 22), new Font("Consolas", 10F, FontStyle.Bold), Yellow));
-        var guideButton = MakeActionButton("HOW TO USE", new Rectangle(632, 91, 100, 42), Ink, Paper);
+            new Rectangle(145, 126, 480, 22), new Font("Consolas", 10F, FontStyle.Bold), Palette.Yellow));
+        var guideButton = MakeActionButton("HOW TO USE", new Rectangle(632, 91, 100, 42), Palette.Ink, Palette.Paper);
         guideButton.AccessibleName = "Open the no-save instruction guide";
         guideButton.Click += (_, _) =>
         {
@@ -121,9 +111,9 @@ internal sealed class MainForm : Form
         Controls.Add(guideButton);
 
         Controls.Add(MakeLabel("NO-SAVE MODE", new Rectangle(55, 222, 310, 32),
-            new Font("Bahnschrift", 18F, FontStyle.Bold), Paper));
+            new Font("Bahnschrift", 18F, FontStyle.Bold), Palette.Paper));
         Controls.Add(MakeLabel("Toggle the Rockstar link without cutting the rest of your network.",
-            new Rectangle(56, 258, 320, 44), new Font("Bahnschrift", 10F), Paper));
+            new Rectangle(56, 258, 320, 44), new Font("Bahnschrift", 10F), Palette.Paper));
 
         _toggle = new BooleanToggle
         {
@@ -136,24 +126,24 @@ internal sealed class MainForm : Form
         Controls.Add(_toggle);
 
         _stateKicker = MakeLabel("STATUS", new Rectangle(458, 264, 218, 18),
-            new Font("Consolas", 9F, FontStyle.Bold), Acid);
+            new Font("Consolas", 9F, FontStyle.Bold), Palette.Acid);
         _stateTitle = MakeLabel("", new Rectangle(458, 286, 220, 36),
-            new Font("Impact", 23F), Acid);
+            new Font("Impact", 23F), Palette.Acid);
         _stateDetail = MakeLabel("", new Rectangle(458, 326, 220, 22),
-            new Font("Bahnschrift", 9F, FontStyle.Bold), Acid);
+            new Font("Bahnschrift", 9F, FontStyle.Bold), Palette.Acid);
         Controls.AddRange([_stateKicker, _stateTitle, _stateDetail]);
 
         _shortcutFooter = MakeTextButton($"{ShortcutText}  //  GTA ONLY",
             new Rectangle(44, 454, 370, 34), new Font("Consolas", 10F, FontStyle.Bold),
-            Ink, Paper);
+            Palette.Ink, Palette.Paper);
         _shortcutFooter.AccessibleName = "Configure the GTA-only keyboard shortcut";
         _shortcutFooter.Click += (_, _) => ConfigureShortcut();
         Controls.Add(_shortcutFooter);
         var adminReady = _previewMode || IsRunningAsAdministrator();
         _gameStatusLabel = MakeLabel(
             adminReady ? "WAITING FOR GTA  //  SAFE RESTORE" : "ADMIN REQUIRED",
-            new Rectangle(466, 458, 257, 24), new Font("Consolas", 8.5F, FontStyle.Bold), Ink,
-            adminReady ? Yellow : HotPink, ContentAlignment.MiddleCenter);
+            new Rectangle(466, 458, 257, 24), new Font("Consolas", 8.5F, FontStyle.Bold), Palette.Ink,
+            adminReady ? Palette.Yellow : Palette.HotPink, ContentAlignment.MiddleCenter);
         Controls.Add(_gameStatusLabel);
 
         _refreshTimer = new System.Windows.Forms.Timer { Interval = 1200 };
@@ -220,12 +210,12 @@ internal sealed class MainForm : Form
     {
         base.OnPaint(e);
         e.Graphics.SmoothingMode = SmoothingMode.None;
-        DrawCard(e.Graphics, new Rectangle(28, 68, 724, 102), Yellow, Ink);
+        DrawCard(e.Graphics, new Rectangle(28, 68, 724, 102), Palette.Yellow, Palette.Ink);
         DrawCard(e.Graphics, new Rectangle(28, 194, 724, 228),
-            _darkMode ? DarkSurface : Paper, Blue);
-        DrawCard(e.Graphics, new Rectangle(432, 248, 280, 110), _stateColor, Ink);
-        DrawCard(e.Graphics, new Rectangle(28, 446, 724, 48), Ink, Blue);
-        using var borderPen = new Pen(Ink, 3F);
+            _darkMode ? Palette.DarkSurface : Palette.Paper, Palette.Blue);
+        DrawCard(e.Graphics, new Rectangle(432, 248, 280, 110), _stateColor, Palette.Ink);
+        DrawCard(e.Graphics, new Rectangle(28, 446, 724, 48), Palette.Ink, Palette.Blue);
+        using var borderPen = new Pen(Palette.Ink, 3F);
         e.Graphics.DrawRectangle(borderPen, 1, 1, ClientSize.Width - 3, ClientSize.Height - 3);
     }
 
@@ -243,7 +233,7 @@ internal sealed class MainForm : Form
         var titleBar = new Panel
         {
             Bounds = new Rectangle(0, 0, ClientSize.Width, 48),
-            BackColor = Ink
+            BackColor = Palette.Ink
         };
 
         var logo = new PictureBox
@@ -251,24 +241,24 @@ internal sealed class MainForm : Form
             Bounds = new Rectangle(12, 7, 34, 34),
             Image = _logoImage,
             SizeMode = PictureBoxSizeMode.Zoom,
-            BackColor = Yellow,
+            BackColor = Palette.Yellow,
             TabStop = false
         };
         var title = MakeLabel("VAULTLOOP", new Rectangle(58, 7, 280, 34),
-            new Font("Bahnschrift", 11F, FontStyle.Bold), Ink, Paper);
+            new Font("Bahnschrift", 11F, FontStyle.Bold), Palette.Ink, Palette.Paper);
         var theme = MakeTextButton(_darkMode ? "LIGHT THEME" : "DARK THEME",
             new Rectangle(408, 10, 130, 28), new Font("Consolas", 8.5F, FontStyle.Bold),
-            Blue, Ink);
+            Palette.Blue, Palette.Ink);
         theme.Name = "ThemeButton";
         theme.AccessibleName = _darkMode ? "Switch to light theme" : "Switch to dark theme";
         theme.Click += (_, _) => ToggleTheme();
         var shortcut = MakeTextButton(ShortcutText, new Rectangle(548, 10, 104, 28),
-            new Font("Consolas", 9F, FontStyle.Bold), Acid, Ink);
+            new Font("Consolas", 9F, FontStyle.Bold), Palette.Acid, Palette.Ink);
         shortcut.Name = "ShortcutBadge";
         shortcut.AccessibleName = "Configure keyboard shortcut";
         shortcut.Click += (_, _) => ConfigureShortcut();
-        var minimize = MakeWindowButton("-", new Rectangle(684, 0, 48, 48), Blue);
-        var close = MakeWindowButton("X", new Rectangle(732, 0, 48, 48), HotPink);
+        var minimize = MakeWindowButton("-", new Rectangle(684, 0, 48, 48), Palette.Blue);
+        var close = MakeWindowButton("X", new Rectangle(732, 0, 48, 48), Palette.HotPink);
         minimize.AccessibleName = "Minimize VaultLoop";
         close.AccessibleName = "Close VaultLoop";
 
@@ -288,8 +278,8 @@ internal sealed class MainForm : Form
         {
             Text = text,
             Bounds = bounds,
-            BackColor = Ink,
-            ForeColor = Paper,
+            BackColor = Palette.Ink,
+            ForeColor = Palette.Paper,
             FlatStyle = FlatStyle.Flat,
             Font = new Font("Bahnschrift", 11F, FontStyle.Bold),
             TabStop = true,
@@ -299,8 +289,8 @@ internal sealed class MainForm : Form
         button.FlatAppearance.BorderSize = 0;
         button.FlatAppearance.MouseOverBackColor = hoverColor;
         button.FlatAppearance.MouseDownBackColor = hoverColor;
-        button.MouseEnter += (_, _) => button.ForeColor = Ink;
-        button.MouseLeave += (_, _) => button.ForeColor = Paper;
+        button.MouseEnter += (_, _) => button.ForeColor = Palette.Ink;
+        button.MouseLeave += (_, _) => button.ForeColor = Palette.Paper;
         return button;
     }
 
@@ -339,11 +329,11 @@ internal sealed class MainForm : Form
             Cursor = Cursors.Hand,
             UseVisualStyleBackColor = false
         };
-        button.FlatAppearance.BorderColor = Ink;
+        button.FlatAppearance.BorderColor = Palette.Ink;
         button.FlatAppearance.BorderSize = 3;
-        button.FlatAppearance.MouseOverBackColor = Blue;
+        button.FlatAppearance.MouseOverBackColor = Palette.Blue;
         var originalForeColor = foreColor;
-        button.MouseEnter += (_, _) => button.ForeColor = Ink;
+        button.MouseEnter += (_, _) => button.ForeColor = Palette.Ink;
         button.MouseLeave += (_, _) => button.ForeColor = originalForeColor;
         return button;
     }
@@ -509,7 +499,7 @@ internal sealed class MainForm : Form
             Interlocked.Exchange(ref _verifiedGameWindow, snapshot.ForegroundWindow.ToInt64());
             Volatile.Write(ref _gameHotkeyReady, true);
             _gameStatusLabel.Text = "GTA READY  //  SAFE RESTORE";
-            _gameStatusLabel.BackColor = Acid;
+            _gameStatusLabel.BackColor = Palette.Acid;
         }
         else
         {
@@ -519,7 +509,7 @@ internal sealed class MainForm : Form
             _gameStatusLabel.Text = snapshot.RunningPath is null
                 ? "WAITING FOR GTA"
                 : "GTA IN BACKGROUND";
-            _gameStatusLabel.BackColor = Yellow;
+            _gameStatusLabel.BackColor = Palette.Yellow;
         }
 
         if (snapshot.FirewallState.HasValue)
@@ -543,7 +533,7 @@ internal sealed class MainForm : Form
             Interlocked.Exchange(ref _verifiedGameWindow, foregroundWindow.ToInt64());
             Volatile.Write(ref _gameHotkeyReady, true);
             _gameStatusLabel.Text = "GTA READY  //  SAFE RESTORE";
-            _gameStatusLabel.BackColor = Acid;
+            _gameStatusLabel.BackColor = Palette.Acid;
             return;
         }
 
@@ -551,13 +541,13 @@ internal sealed class MainForm : Form
         {
             _verifiedGamePath = runningPath;
             _gameStatusLabel.Text = "GTA IN BACKGROUND";
-            _gameStatusLabel.BackColor = Yellow;
+            _gameStatusLabel.BackColor = Palette.Yellow;
         }
         else
         {
             _verifiedGamePath = null;
             _gameStatusLabel.Text = "WAITING FOR GTA";
-            _gameStatusLabel.BackColor = Yellow;
+            _gameStatusLabel.BackColor = Palette.Yellow;
         }
     }
 
@@ -628,22 +618,22 @@ internal sealed class MainForm : Form
 
     private void ApplyTheme()
     {
-        BackColor = _darkMode ? DarkCanvas : Cream;
-        ForeColor = _darkMode ? Paper : Ink;
+        BackColor = _darkMode ? Palette.DarkCanvas : Palette.Cream;
+        ForeColor = _darkMode ? Palette.Paper : Palette.Ink;
         foreach (var entry in _originalBackColors)
         {
             var originalBack = entry.Value;
-            var mappedBack = originalBack == Cream
-                ? (_darkMode ? DarkCanvas : Cream)
-                : originalBack == Paper
-                    ? (_darkMode ? DarkSurface : Paper)
+            var mappedBack = originalBack == Palette.Cream
+                ? (_darkMode ? Palette.DarkCanvas : Palette.Cream)
+                : originalBack == Palette.Paper
+                    ? (_darkMode ? Palette.DarkSurface : Palette.Paper)
                     : originalBack;
             entry.Key.BackColor = mappedBack;
 
             var originalFore = _originalForeColors[entry.Key];
-            entry.Key.ForeColor = _darkMode && originalFore == Ink &&
-                                  (originalBack == Cream || originalBack == Paper)
-                ? Paper
+            entry.Key.ForeColor = _darkMode && originalFore == Palette.Ink &&
+                                  (originalBack == Palette.Cream || originalBack == Palette.Paper)
+                ? Palette.Paper
                 : originalFore;
         }
         _themeButton.Text = _darkMode ? "LIGHT THEME" : "DARK THEME";
@@ -709,14 +699,14 @@ internal sealed class MainForm : Form
             if (fromHotkey)
             {
                 ShowStatusToast(enabled ? "NO-SAVE ACTIVE" : "NO-SAVE INACTIVE",
-                    enabled ? HotPink : Acid);
+                    enabled ? Palette.HotPink : Palette.Acid);
             }
         }
         catch (Exception exception)
         {
             if (fromHotkey)
             {
-                ShowStatusToast("NO-SAVE ERROR", Yellow, exception.Message);
+                ShowStatusToast("NO-SAVE ERROR", Palette.Yellow, exception.Message);
             }
             else
             {
@@ -781,7 +771,7 @@ internal sealed class MainForm : Form
         _toggle.Checked = enabled;
         _toggle.Enabled = !_applying;
         _toggle.AccessibleName = enabled ? "No-save active" : "No-save inactive";
-        _stateColor = enabled ? HotPink : Acid;
+        _stateColor = enabled ? Palette.HotPink : Palette.Acid;
         _stateKicker.BackColor = _stateColor;
         _stateTitle.BackColor = _stateColor;
         _stateDetail.BackColor = _stateColor;
@@ -797,7 +787,7 @@ internal sealed class MainForm : Form
         _toggle.IsStateKnown = false;
         _toggle.IsRecoveryMode = true;
         _toggle.Enabled = !_applying;
-        _stateColor = Yellow;
+        _stateColor = Palette.Yellow;
         _stateKicker.BackColor = _stateColor;
         _stateTitle.BackColor = _stateColor;
         _stateDetail.BackColor = _stateColor;
@@ -814,7 +804,7 @@ internal sealed class MainForm : Form
         _toggle.IsRecoveryMode = false;
         _toggle.IsStateKnown = false;
         _toggle.Enabled = false;
-        _stateColor = Yellow;
+        _stateColor = Palette.Yellow;
         _stateKicker.BackColor = _stateColor;
         _stateTitle.BackColor = _stateColor;
         _stateDetail.BackColor = _stateColor;
@@ -896,7 +886,7 @@ internal sealed class MainForm : Form
             Bounds = bounds,
             Font = font,
             BackColor = backColor,
-            ForeColor = foreColor ?? Ink,
+            ForeColor = foreColor ?? Palette.Ink,
             TextAlign = alignment,
             AutoEllipsis = true
         };
@@ -905,7 +895,7 @@ internal sealed class MainForm : Form
     {
         using var shadowBrush = new SolidBrush(shadow);
         using var fillBrush = new SolidBrush(fill);
-        using var borderPen = new Pen(Ink, 4F);
+        using var borderPen = new Pen(Palette.Ink, 4F);
         graphics.FillRectangle(shadowBrush,
             new Rectangle(bounds.X + 8, bounds.Y + 8, bounds.Width, bounds.Height));
         graphics.FillRectangle(fillBrush, bounds);

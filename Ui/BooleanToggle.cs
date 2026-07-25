@@ -6,11 +6,6 @@ namespace ReplayGlitchGTA;
 
 internal sealed class BooleanToggle : Control
 {
-    private static readonly Color Ink = Color.FromArgb(17, 17, 17);
-    private static readonly Color Paper = Color.FromArgb(255, 253, 245);
-    private static readonly Color Yellow = Color.FromArgb(255, 215, 56);
-    private static readonly Color Acid = Color.FromArgb(185, 255, 61);
-    private static readonly Color HotPink = Color.FromArgb(255, 83, 112);
     private bool _checked;
     private bool _isStateKnown = true;
     private bool _isRecoveryMode;
@@ -96,11 +91,11 @@ internal sealed class BooleanToggle : Control
             ? new Rectangle(track.X + 8, track.Y, track.Width - knobWidth - 22, track.Height)
             : new Rectangle(track.X + knobWidth + 14, track.Y, track.Width - knobWidth - 22, track.Height);
 
-        using var shadowBrush = new SolidBrush(Ink);
+        using var shadowBrush = new SolidBrush(Palette.Ink);
         using var trackBrush = new SolidBrush(
-            !IsStateKnown ? Yellow : Checked ? HotPink : Acid);
-        using var knobBrush = new SolidBrush(Paper);
-        using var borderPen = new Pen(Ink, 4F);
+            !IsStateKnown ? Palette.Yellow : Checked ? Palette.HotPink : Palette.Acid);
+        using var knobBrush = new SolidBrush(Palette.Paper);
+        using var borderPen = new Pen(Palette.Ink, 4F);
         using var labelFont = new Font("Impact", 23F);
         using var knobFont = new Font("Consolas", 9F, FontStyle.Bold);
 
@@ -109,28 +104,28 @@ internal sealed class BooleanToggle : Control
         e.Graphics.DrawRectangle(borderPen, track);
         if (IsRecoveryMode)
         {
-            TextRenderer.DrawText(e.Graphics, "RESTORE", labelFont, track, Ink,
+            TextRenderer.DrawText(e.Graphics, "RESTORE", labelFont, track, Palette.Ink,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
         else if (!IsStateKnown)
         {
-            TextRenderer.DrawText(e.Graphics, "STATE ?", labelFont, track, Ink,
+            TextRenderer.DrawText(e.Graphics, "STATE ?", labelFont, track, Palette.Ink,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
         else
         {
             e.Graphics.FillRectangle(knobBrush, knob);
             e.Graphics.DrawRectangle(borderPen, knob);
-            TextRenderer.DrawText(e.Graphics, Checked ? "ON" : "OFF", labelFont, labelArea, Ink,
+            TextRenderer.DrawText(e.Graphics, Checked ? "ON" : "OFF", labelFont, labelArea, Palette.Ink,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            TextRenderer.DrawText(e.Graphics, "NO-SAVE", knobFont, knob, Ink,
+            TextRenderer.DrawText(e.Graphics, "NO-SAVE", knobFont, knob, Palette.Ink,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
 
         if (Focused)
         {
             var focus = Rectangle.Inflate(track, -7, -7);
-            ControlPaint.DrawFocusRectangle(e.Graphics, focus, Ink, Checked ? HotPink : Acid);
+            ControlPaint.DrawFocusRectangle(e.Graphics, focus, Palette.Ink, Checked ? Palette.HotPink : Palette.Acid);
         }
     }
 

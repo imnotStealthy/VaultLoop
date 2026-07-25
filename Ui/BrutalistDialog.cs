@@ -7,21 +7,12 @@ namespace ReplayGlitchGTA;
 
 internal abstract class BrutalistDialog : Form
 {
-    protected static readonly Color Ink = Color.FromArgb(17, 17, 17);
-    protected static readonly Color Paper = Color.FromArgb(255, 253, 245);
-    protected static readonly Color Yellow = Color.FromArgb(255, 215, 56);
-    protected static readonly Color Acid = Color.FromArgb(185, 255, 61);
-    protected static readonly Color Blue = Color.FromArgb(91, 134, 255);
-    protected static readonly Color AlertRed = Color.FromArgb(232, 54, 70);
-    protected static readonly Color DarkCanvas = Color.FromArgb(20, 20, 20);
-    protected static readonly Color DarkSurface = Color.FromArgb(34, 34, 34);
-
     protected BrutalistDialog(string title, Size size, Color background)
     {
         Text = title;
         ClientSize = size;
         BackColor = background;
-        ForeColor = background == DarkCanvas ? Paper : Ink;
+        ForeColor = background == Palette.DarkCanvas ? Palette.Paper : Palette.Ink;
         Font = new Font("Bahnschrift", 10F);
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterParent;
@@ -33,24 +24,24 @@ internal abstract class BrutalistDialog : Form
         {
             Dock = DockStyle.Top,
             Height = 44,
-            BackColor = Ink
+            BackColor = Palette.Ink
         };
         var titleLabel = new Label
         {
             Text = title,
             Bounds = new Rectangle(16, 0, size.Width - 68, 44),
-            BackColor = Ink,
-            ForeColor = Paper,
+            BackColor = Palette.Ink,
+            ForeColor = Palette.Paper,
             Font = new Font("Bahnschrift", 10F, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleLeft
         };
         var closeButton = CreateButton("X", new Rectangle(size.Width - 48, 0, 48, 44),
-            Ink, Paper);
+            Palette.Ink, Palette.Paper);
         closeButton.AccessibleName = "Close dialog";
         closeButton.FlatAppearance.BorderSize = 0;
-        closeButton.FlatAppearance.MouseOverBackColor = AlertRed;
-        closeButton.MouseEnter += (_, _) => closeButton.ForeColor = Ink;
-        closeButton.MouseLeave += (_, _) => closeButton.ForeColor = Paper;
+        closeButton.FlatAppearance.MouseOverBackColor = Palette.AlertRed;
+        closeButton.MouseEnter += (_, _) => closeButton.ForeColor = Palette.Ink;
+        closeButton.MouseLeave += (_, _) => closeButton.ForeColor = Palette.Paper;
         closeButton.Click += (_, _) =>
         {
             DialogResult = DialogResult.Cancel;
@@ -65,7 +56,7 @@ internal abstract class BrutalistDialog : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        using var pen = new Pen(Ink, 3F);
+        using var pen = new Pen(Palette.Ink, 3F);
         e.Graphics.DrawRectangle(pen, 1, 1, ClientSize.Width - 3, ClientSize.Height - 3);
     }
 
@@ -83,7 +74,7 @@ internal abstract class BrutalistDialog : Form
             Cursor = Cursors.Hand,
             UseVisualStyleBackColor = false
         };
-        button.FlatAppearance.BorderColor = Ink;
+        button.FlatAppearance.BorderColor = Palette.Ink;
         button.FlatAppearance.BorderSize = 3;
         return button;
     }

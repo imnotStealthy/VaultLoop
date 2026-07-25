@@ -5,16 +5,14 @@ namespace ReplayGlitchGTA;
 
 internal sealed class StatusToastForm : Form
 {
-    private static readonly Color Ink = Color.FromArgb(17, 17, 17);
-    private static readonly Color Paper = Color.FromArgb(255, 253, 245);
     private readonly System.Windows.Forms.Timer _closeTimer;
 
     internal StatusToastForm(string title, string detail, Color accent)
     {
         var hasDetail = !string.IsNullOrWhiteSpace(detail);
         ClientSize = new Size(360, hasDetail ? 116 : 88);
-        BackColor = Ink;
-        ForeColor = Paper;
+        BackColor = Palette.Ink;
+        ForeColor = Palette.Paper;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
@@ -27,7 +25,7 @@ internal sealed class StatusToastForm : Form
         {
             Text = title,
             Bounds = new Rectangle(18, 12, 324, 30),
-            BackColor = Ink,
+            BackColor = Palette.Ink,
             ForeColor = accent,
             Font = new Font("Impact", 18F),
             TextAlign = ContentAlignment.MiddleLeft
@@ -36,8 +34,8 @@ internal sealed class StatusToastForm : Form
         {
             Text = hasDetail ? detail : "VAULTLOOP // GTA ONLY",
             Bounds = new Rectangle(20, 45, 320, hasDetail ? 54 : 26),
-            BackColor = Ink,
-            ForeColor = Paper,
+            BackColor = Palette.Ink,
+            ForeColor = Palette.Paper,
             Font = new Font("Bahnschrift", 8.5F, FontStyle.Bold),
             AutoEllipsis = true
         });
@@ -76,7 +74,7 @@ internal sealed class StatusToastForm : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        using var pen = new Pen(Paper, 3F);
+        using var pen = new Pen(Palette.Paper, 3F);
         e.Graphics.DrawRectangle(pen, 1, 1, Width - 3, Height - 3);
     }
 
