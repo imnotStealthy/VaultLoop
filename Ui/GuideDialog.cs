@@ -138,7 +138,10 @@ internal sealed class GuideDialog : BrutalistDialog
             Font = Typography.StatusDetail,
             Padding = new Padding(14, 9, 14, 9)
         });
-        var closeButton = CreateButton("GOT IT", new Rectangle(582, 654, 110, 36), Palette.Ink, Palette.Paper);
+        var closeButton = BrutalistControls.CreateButton(
+            "GOT IT", new Rectangle(582, 654, 110, 36), Typography.StatusDetail,
+            Palette.Ink, Palette.Paper, 3, Palette.Ink, null, null,
+            ContentAlignment.MiddleCenter, null);
         closeButton.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
         Controls.Add(closeButton);
         AcceptButton = closeButton;

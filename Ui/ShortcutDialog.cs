@@ -36,10 +36,11 @@ internal sealed class ShortcutDialog : BrutalistDialog
             ForeColor = textColor
         });
 
-        _capturedButton = CreateButton(ShortcutSettings.Format(modifiers, key),
-            new Rectangle(30, 144, 370, 52),
-            darkMode ? Palette.DarkSurface : Palette.Paper,
-            darkMode ? Palette.Paper : Palette.Ink);
+        _capturedButton = BrutalistControls.CreateButton(
+            ShortcutSettings.Format(modifiers, key), new Rectangle(30, 144, 370, 52),
+            Typography.StatusDetail, darkMode ? Palette.DarkSurface : Palette.Paper,
+            darkMode ? Palette.Paper : Palette.Ink, 3, Palette.Ink, null, null,
+            ContentAlignment.MiddleCenter, null);
         _capturedButton.Name = "ShortcutCapture";
         _capturedButton.AccessibleName = "Keyboard shortcut capture field";
         _capturedButton.AccessibleDescription =
@@ -50,11 +51,18 @@ internal sealed class ShortcutDialog : BrutalistDialog
 
         var secondaryColor = darkMode ? Palette.DarkSurface : Palette.Paper;
         var secondaryText = darkMode ? Palette.Paper : Palette.Ink;
-        var resetButton = CreateButton("RESET", new Rectangle(30, 218, 86, 36),
-            secondaryColor, secondaryText);
-        var saveButton = CreateButton("SAVE", new Rectangle(220, 218, 84, 36), Palette.Acid, Palette.Ink);
-        var cancelButton = CreateButton("CANCEL", new Rectangle(314, 218, 86, 36),
-            secondaryColor, secondaryText);
+        var resetButton = BrutalistControls.CreateButton(
+            "RESET", new Rectangle(30, 218, 86, 36), Typography.StatusDetail,
+            secondaryColor, secondaryText, 3, Palette.Ink, null, null,
+            ContentAlignment.MiddleCenter, null);
+        var saveButton = BrutalistControls.CreateButton(
+            "SAVE", new Rectangle(220, 218, 84, 36), Typography.StatusDetail,
+            Palette.Acid, Palette.Ink, 3, Palette.Ink, null, null,
+            ContentAlignment.MiddleCenter, null);
+        var cancelButton = BrutalistControls.CreateButton(
+            "CANCEL", new Rectangle(314, 218, 86, 36), Typography.StatusDetail,
+            secondaryColor, secondaryText, 3, Palette.Ink, null, null,
+            ContentAlignment.MiddleCenter, null);
         resetButton.Click += (_, _) =>
         {
             (ShortcutModifiers, ShortcutKey) = ShortcutSettings.Default;

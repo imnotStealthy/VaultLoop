@@ -34,8 +34,10 @@ internal abstract class BrutalistDialog : Form
             Font = Typography.DialogTitleBar,
             TextAlign = ContentAlignment.MiddleLeft
         };
-        var closeButton = CreateButton("X", new Rectangle(size.Width - 48, 0, 48, 44),
-            Palette.Ink, Palette.Paper);
+        var closeButton = BrutalistControls.CreateButton(
+            "X", new Rectangle(size.Width - 48, 0, 48, 44), Typography.StatusDetail,
+            Palette.Ink, Palette.Paper, 3, Palette.Ink, null, null,
+            ContentAlignment.MiddleCenter, null);
         closeButton.AccessibleName = "Close dialog";
         closeButton.FlatAppearance.BorderSize = 0;
         closeButton.FlatAppearance.MouseOverBackColor = Palette.AlertRed;
@@ -57,25 +59,6 @@ internal abstract class BrutalistDialog : Form
         base.OnPaint(e);
         using var pen = new Pen(Palette.Ink, 3F);
         e.Graphics.DrawRectangle(pen, 1, 1, ClientSize.Width - 3, ClientSize.Height - 3);
-    }
-
-    protected static Button CreateButton(string text, Rectangle bounds, Color backColor,
-        Color foreColor)
-    {
-        var button = new Button
-        {
-            Text = text,
-            Bounds = bounds,
-            BackColor = backColor,
-            ForeColor = foreColor,
-            FlatStyle = FlatStyle.Flat,
-            Font = Typography.StatusDetail,
-            Cursor = Cursors.Hand,
-            UseVisualStyleBackColor = false
-        };
-        button.FlatAppearance.BorderColor = Palette.Ink;
-        button.FlatAppearance.BorderSize = 3;
-        return button;
     }
 
     private void BeginDrag(object? sender, MouseEventArgs eventArgs)

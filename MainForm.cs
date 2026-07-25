@@ -86,11 +86,15 @@ internal sealed class MainForm : Form
             TabStop = false
         };
         Controls.Add(headerLogo);
-        Controls.Add(MakeLabel("VAULTLOOP / NO-SAVE", new Rectangle(143, 83, 485, 42),
+        Controls.Add(BrutalistControls.MakeLabel(
+            "VAULTLOOP / NO-SAVE", new Rectangle(143, 83, 485, 42),
             Typography.ProductTitle, Palette.Yellow));
-        Controls.Add(MakeLabel("ROCKSTAR CLOUD CONTROL",
+        Controls.Add(BrutalistControls.MakeLabel("ROCKSTAR CLOUD CONTROL",
             new Rectangle(145, 126, 480, 22), Typography.MonoCaption, Palette.Yellow));
-        var guideButton = MakeActionButton("HOW TO USE", new Rectangle(632, 91, 100, 42), Palette.Ink, Palette.Paper);
+        var guideButton = BrutalistControls.CreateButton(
+            "HOW TO USE", new Rectangle(632, 91, 100, 42), Typography.ActionButton,
+            Palette.Ink, Palette.Paper, 3, Palette.Ink, Palette.Blue, null,
+            ContentAlignment.MiddleCenter, Palette.Ink);
         guideButton.AccessibleName = "Open the no-save instruction guide";
         guideButton.Click += (_, _) =>
         {
@@ -99,9 +103,11 @@ internal sealed class MainForm : Form
         };
         Controls.Add(guideButton);
 
-        Controls.Add(MakeLabel("NO-SAVE MODE", new Rectangle(55, 222, 310, 32),
+        Controls.Add(BrutalistControls.MakeLabel(
+            "NO-SAVE MODE", new Rectangle(55, 222, 310, 32),
             Typography.SectionTitle, Palette.Paper));
-        Controls.Add(MakeLabel("Toggle the Rockstar link without cutting the rest of your network.",
+        Controls.Add(BrutalistControls.MakeLabel(
+            "Toggle the Rockstar link without cutting the rest of your network.",
             new Rectangle(56, 258, 320, 44), Typography.Body, Palette.Paper));
 
         _toggle = new BooleanToggle
@@ -114,22 +120,26 @@ internal sealed class MainForm : Form
         _toggle.ToggleRequested += (_, _) => ToggleState();
         Controls.Add(_toggle);
 
-        _stateKicker = MakeLabel("STATUS", new Rectangle(458, 264, 218, 18),
+        _stateKicker = BrutalistControls.MakeLabel(
+            "STATUS", new Rectangle(458, 264, 218, 18),
             Typography.CompactMono, Palette.Acid);
-        _stateTitle = MakeLabel("", new Rectangle(458, 286, 220, 36),
+        _stateTitle = BrutalistControls.MakeLabel(
+            "", new Rectangle(458, 286, 220, 36),
             Typography.StatusTitle, Palette.Acid);
-        _stateDetail = MakeLabel("", new Rectangle(458, 326, 220, 22),
+        _stateDetail = BrutalistControls.MakeLabel(
+            "", new Rectangle(458, 326, 220, 22),
             Typography.StatusDetail, Palette.Acid);
         Controls.AddRange([_stateKicker, _stateTitle, _stateDetail]);
 
-        _shortcutFooter = MakeTextButton($"{ShortcutText}  //  GTA ONLY",
-            new Rectangle(44, 454, 370, 34), Typography.MonoCaption,
-            Palette.Ink, Palette.Paper);
+        _shortcutFooter = BrutalistControls.CreateButton(
+            $"{ShortcutText}  //  GTA ONLY", new Rectangle(44, 454, 370, 34),
+            Typography.MonoCaption, Palette.Ink, Palette.Paper, 0, null,
+            Palette.Ink, Palette.Ink, ContentAlignment.MiddleCenter, null);
         _shortcutFooter.AccessibleName = "Configure the GTA-only keyboard shortcut";
         _shortcutFooter.Click += (_, _) => ConfigureShortcut();
         Controls.Add(_shortcutFooter);
         var adminReady = _previewMode || IsRunningAsAdministrator();
-        _gameStatusLabel = MakeLabel(
+        _gameStatusLabel = BrutalistControls.MakeLabel(
             adminReady ? "WAITING FOR GTA  //  SAFE RESTORE" : "ADMIN REQUIRED",
             new Rectangle(466, 458, 257, 24), Typography.TinyMono, Palette.Ink,
             adminReady ? Palette.Yellow : Palette.HotPink, ContentAlignment.MiddleCenter);
@@ -234,21 +244,32 @@ internal sealed class MainForm : Form
             BackColor = Palette.Yellow,
             TabStop = false
         };
-        var title = MakeLabel("VAULTLOOP", new Rectangle(58, 7, 280, 34),
+        var title = BrutalistControls.MakeLabel(
+            "VAULTLOOP", new Rectangle(58, 7, 280, 34),
             Typography.WindowTitle, Palette.Ink, Palette.Paper);
-        var theme = MakeTextButton(_darkMode ? "LIGHT THEME" : "DARK THEME",
+        var theme = BrutalistControls.CreateButton(
+            _darkMode ? "LIGHT THEME" : "DARK THEME",
             new Rectangle(408, 10, 130, 28), Typography.TinyMono,
-            Palette.Blue, Palette.Ink);
+            Palette.Blue, Palette.Ink, 0, null, Palette.Blue, Palette.Blue,
+            ContentAlignment.MiddleCenter, null);
         theme.Name = "ThemeButton";
         theme.AccessibleName = _darkMode ? "Switch to light theme" : "Switch to dark theme";
         theme.Click += (_, _) => ToggleTheme();
-        var shortcut = MakeTextButton(ShortcutText, new Rectangle(548, 10, 104, 28),
-            Typography.CompactMono, Palette.Acid, Palette.Ink);
+        var shortcut = BrutalistControls.CreateButton(
+            ShortcutText, new Rectangle(548, 10, 104, 28), Typography.CompactMono,
+            Palette.Acid, Palette.Ink, 0, null, Palette.Acid, Palette.Acid,
+            ContentAlignment.MiddleCenter, null);
         shortcut.Name = "ShortcutBadge";
         shortcut.AccessibleName = "Configure keyboard shortcut";
         shortcut.Click += (_, _) => ConfigureShortcut();
-        var minimize = MakeWindowButton("-", new Rectangle(684, 0, 48, 48), Palette.Blue);
-        var close = MakeWindowButton("X", new Rectangle(732, 0, 48, 48), Palette.HotPink);
+        var minimize = BrutalistControls.CreateButton(
+            "-", new Rectangle(684, 0, 48, 48), Typography.WindowTitle,
+            Palette.Ink, Palette.Paper, 0, null, Palette.Blue, Palette.Blue,
+            ContentAlignment.MiddleCenter, Palette.Ink);
+        var close = BrutalistControls.CreateButton(
+            "X", new Rectangle(732, 0, 48, 48), Typography.WindowTitle,
+            Palette.Ink, Palette.Paper, 0, null, Palette.HotPink, Palette.HotPink,
+            ContentAlignment.MiddleCenter, Palette.Ink);
         minimize.AccessibleName = "Minimize VaultLoop";
         close.AccessibleName = "Close VaultLoop";
 
@@ -260,72 +281,6 @@ internal sealed class MainForm : Form
 
         titleBar.Controls.AddRange([logo, title, theme, shortcut, minimize, close]);
         return titleBar;
-    }
-
-    private static Button MakeWindowButton(string text, Rectangle bounds, Color hoverColor)
-    {
-        var button = new Button
-        {
-            Text = text,
-            Bounds = bounds,
-            BackColor = Palette.Ink,
-            ForeColor = Palette.Paper,
-            FlatStyle = FlatStyle.Flat,
-            Font = Typography.WindowTitle,
-            TabStop = true,
-            UseVisualStyleBackColor = false,
-            Cursor = Cursors.Hand
-        };
-        button.FlatAppearance.BorderSize = 0;
-        button.FlatAppearance.MouseOverBackColor = hoverColor;
-        button.FlatAppearance.MouseDownBackColor = hoverColor;
-        button.MouseEnter += (_, _) => button.ForeColor = Palette.Ink;
-        button.MouseLeave += (_, _) => button.ForeColor = Palette.Paper;
-        return button;
-    }
-
-    private static Button MakeTextButton(string text, Rectangle bounds, Font font,
-        Color backColor, Color foreColor)
-    {
-        var button = new Button
-        {
-            Text = text,
-            Bounds = bounds,
-            Font = font,
-            BackColor = backColor,
-            ForeColor = foreColor,
-            FlatStyle = FlatStyle.Flat,
-            Cursor = Cursors.Hand,
-            UseVisualStyleBackColor = false,
-            TextAlign = ContentAlignment.MiddleCenter
-        };
-        button.FlatAppearance.BorderSize = 0;
-        button.FlatAppearance.MouseOverBackColor = backColor;
-        button.FlatAppearance.MouseDownBackColor = backColor;
-        return button;
-    }
-
-    private static Button MakeActionButton(string text, Rectangle bounds, Color backColor,
-        Color foreColor)
-    {
-        var button = new Button
-        {
-            Text = text,
-            Bounds = bounds,
-            BackColor = backColor,
-            ForeColor = foreColor,
-            FlatStyle = FlatStyle.Flat,
-            Font = Typography.ActionButton,
-            Cursor = Cursors.Hand,
-            UseVisualStyleBackColor = false
-        };
-        button.FlatAppearance.BorderColor = Palette.Ink;
-        button.FlatAppearance.BorderSize = 3;
-        button.FlatAppearance.MouseOverBackColor = Palette.Blue;
-        var originalForeColor = foreColor;
-        button.MouseEnter += (_, _) => button.ForeColor = Palette.Ink;
-        button.MouseLeave += (_, _) => button.ForeColor = originalForeColor;
-        return button;
     }
 
     private void BeginWindowDrag(object? sender, MouseEventArgs eventArgs)
@@ -874,19 +829,6 @@ internal sealed class MainForm : Form
         using var image = Image.FromStream(stream);
         return new Bitmap(image);
     }
-
-    private static Label MakeLabel(string text, Rectangle bounds, Font font, Color backColor,
-        Color? foreColor = null, ContentAlignment alignment = ContentAlignment.MiddleLeft) =>
-        new()
-        {
-            Text = text,
-            Bounds = bounds,
-            Font = font,
-            BackColor = backColor,
-            ForeColor = foreColor ?? Palette.Ink,
-            TextAlign = alignment,
-            AutoEllipsis = true
-        };
 
     private static void DrawCard(Graphics graphics, Rectangle bounds, Color fill, Color shadow)
     {
