@@ -26,7 +26,7 @@ internal static class RockstarNetworks
     /// </summary>
     /// <remarks>
     /// This is the single address the original AutoHotkey script blocked
-    /// (<c>legacy/V1.2_nosave.ahk</c>), and the only configuration ever observed to be usable.
+    /// by the original AutoHotkey implementation, and the only configuration ever observed to be usable.
     ///
     /// It was briefly widened to <c>192.81.241.0/24</c> plus the IPv6 allocation. Field
     /// evidence retired that: the wider set reaches Rockstar authentication and the game drops

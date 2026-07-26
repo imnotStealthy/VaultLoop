@@ -201,4 +201,3 @@ on its own.
 - `Input\` — the low-level keyboard hook.
 - `Interop\` — P/Invoke declarations, structs, and message constants.
 - `Settings\` — shortcut, theme, and guide-progress persistence.
-- `legacy\` — historical files that must not be run with VaultLoop.
