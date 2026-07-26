@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace ReplayGlitchGTA;
@@ -22,6 +23,8 @@ internal static class GameProcessService
     private const uint WinTrustRevocationCheckChainExcludeRoot = 0x80;
     private const uint WinTrustDisableMd2Md4 = 0x2000;
     private const int FileBasicInfoClass = 0;
+    private const int ProcessQueryLimitedInformation = 0x1000;
+    private const int MaximumExtendedPath = 32768;
 
     private static readonly string[] SupportedProcessNames =
         [EnhancedProcessName, LegacyProcessName];
@@ -118,6 +121,59 @@ internal static class GameProcessService
         return false;
     }
 
+    /// <summary>
+    /// Finds a running, Authenticode-verified game process and reports its identifier along
+    /// with its path. Used by the connection diagnostics, which need the process id to read
+    /// the owning rows of the TCP table. Applies the same trust checks as every other entry
+    /// point: an unverified process is never reported.
+    /// </summary>
+    internal static bool TryGetVerifiedGameProcess(out int processId, out string executablePath)
+    {
+        processId = 0;
+        executablePath = string.Empty;
+        foreach (var processName in SupportedProcessNames)
+        {
+            Process[] processes;
+            try
+            {
+                processes = Process.GetProcessesByName(processName);
+            }
+            catch
+            {
+                continue;
+            }
+
+            try
+            {
+                foreach (var process in processes)
+                {
+                    if (!TryGetVerifiedProcessPath(process, out var candidatePath))
+                    {
+                        continue;
+                    }
+                    try
+                    {
+                        processId = process.Id;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+                    executablePath = candidatePath;
+                    return true;
+                }
+            }
+            finally
+            {
+                foreach (var process in processes)
+                {
+                    process.Dispose();
+                }
+            }
+        }
+        return false;
+    }
+
     internal static bool IsTrustedGameExecutable(string executablePath)
     {
         if (string.IsNullOrWhiteSpace(executablePath))
@@ -175,7 +231,7 @@ internal static class GameProcessService
                 return false;
             }
 
-            var candidatePath = process.MainModule?.FileName;
+            var candidatePath = TryGetProcessImagePath(process);
             if (string.IsNullOrWhiteSpace(candidatePath))
             {
                 return false;
@@ -193,6 +249,178 @@ internal static class GameProcessService
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Resolves a running process's image path, preferring <see cref="Process.MainModule"/>
+    /// and falling back to <c>QueryFullProcessImageName</c>.
+    /// </summary>
+    /// <remarks>
+    /// Reading MainModule needs PROCESS_VM_READ, which anti-cheat protection on an online game
+    /// process routinely denies even to an administrator — the game then looks absent to the
+    /// detector. QueryFullProcessImageName needs only PROCESS_QUERY_LIMITED_INFORMATION, which
+    /// survives that protection. This changes nothing about trust: whatever path comes back is
+    /// still put through <see cref="IsTrustedGameExecutable"/>.
+    /// </remarks>
+    private static string? TryGetProcessImagePath(Process process)
+    {
+        try
+        {
+            var mainModulePath = process.MainModule?.FileName;
+            if (!string.IsNullOrWhiteSpace(mainModulePath))
+            {
+                return mainModulePath;
+            }
+        }
+        catch
+        {
+            // Falls through to the limited-information query below.
+        }
+
+        int processId;
+        try
+        {
+            processId = process.Id;
+        }
+        catch
+        {
+            return null;
+        }
+
+        var handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+        if (handle == IntPtr.Zero)
+        {
+            return null;
+        }
+        try
+        {
+            var buffer = new StringBuilder(MaximumExtendedPath);
+            var size = buffer.Capacity;
+            return QueryFullProcessImageName(handle, 0, buffer, ref size)
+                ? buffer.ToString()
+                : null;
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
+
+    /// <summary>
+    /// Explains, for every process whose name looks like GTA, why it is or is not accepted.
+    /// Diagnostics only — it reports on the real checks and never relaxes them; the verdict
+    /// line comes from <see cref="IsTrustedGameExecutable"/> itself.
+    /// </summary>
+    internal static IReadOnlyList<string> DescribeDetectionCandidates()
+    {
+        Process[] processes;
+        try
+        {
+            processes = Process.GetProcesses();
+        }
+        catch (Exception exception)
+        {
+            return [$"process enumeration failed: {exception.Message}"];
+        }
+
+        var lines = new List<string>();
+        try
+        {
+            foreach (var process in processes)
+            {
+                string processName;
+                try
+                {
+                    processName = process.ProcessName;
+                }
+                catch
+                {
+                    continue;
+                }
+                if (processName.IndexOf("gta", StringComparison.OrdinalIgnoreCase) < 0 &&
+                    !IsSupportedProcessName(processName))
+                {
+                    continue;
+                }
+
+                var processId = 0;
+                try
+                {
+                    processId = process.Id;
+                }
+                catch
+                {
+                    // Reported as pid 0 below.
+                }
+
+                var path = TryGetProcessImagePath(process);
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    lines.Add($"{processName} (pid {processId}): executable path unavailable");
+                    continue;
+                }
+                lines.Add($"{processName} (pid {processId}): {path}");
+                lines.Add($"    {DescribeTrust(path!)}");
+            }
+        }
+        finally
+        {
+            foreach (var process in processes)
+            {
+                process.Dispose();
+            }
+        }
+
+        if (lines.Count == 0)
+        {
+            lines.Add("no running process has a GTA-like name");
+        }
+        return lines;
+    }
+
+    private static string DescribeTrust(string executablePath)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(executablePath);
+            var fileName = Path.GetFileNameWithoutExtension(fullPath);
+            if (!Path.GetExtension(fullPath).Equals(".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return "rejected: not an .exe";
+            }
+            if (!IsSupportedProcessName(fileName))
+            {
+                return $"rejected: executable name '{fileName}' is not a supported game name " +
+                       $"(expected {LegacyProcessName} or {EnhancedProcessName})";
+            }
+
+            using var file = new FileStream(fullPath, FileMode.Open, FileAccess.Read,
+                FileShare.Read, 4096, FileOptions.SequentialScan);
+            if (!VerifyAuthenticode(fullPath, file.SafeFileHandle))
+            {
+                return "rejected: Authenticode signature did not verify";
+            }
+
+            string publisher;
+            try
+            {
+                using var signer = X509Certificate.CreateFromSignedFile(fullPath);
+                using var certificate = new X509Certificate2(signer);
+                publisher = certificate.GetNameInfo(X509NameType.SimpleName, false).Trim();
+            }
+            catch (Exception exception)
+            {
+                return $"rejected: signer certificate unreadable ({exception.GetType().Name})";
+            }
+
+            return IsTrustedGameExecutable(fullPath)
+                ? $"accepted: signed by '{publisher}'"
+                : $"rejected: publisher is '{publisher}'";
+        }
+        catch (Exception exception)
+        {
+            return $"rejected: {exception.GetType().Name}: {exception.Message}";
         }
     }
 
@@ -293,6 +521,17 @@ internal static class GameProcessService
             TrustCache[path] = new TrustCacheEntry(fingerprint, trusted, expiresAt);
         }
     }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(
+        int desiredAccess, bool inheritHandle, int processId);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool QueryFullProcessImageName(
+        IntPtr process, int flags, StringBuilder executableName, ref int size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();

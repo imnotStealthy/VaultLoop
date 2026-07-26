@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -12,6 +13,14 @@ namespace ReplayGlitchGTA;
 
 internal sealed class MainForm : Form
 {
+    private const int RefreshIntervalMilliseconds = 1200;
+
+    /// <summary>Roughly six seconds of tolerance before auto-restoring on game loss.</summary>
+    private const int MissingGameTicksBeforeRestore = 5;
+
+    /// <summary>Two consecutive ticks, so a single scheduling hiccup cannot raise the alarm.</summary>
+    private const int LeakingTicksBeforeWarning = 2;
+
     private readonly FirewallService? _firewall;
     private readonly BooleanToggle _toggle;
     private readonly Label _stateKicker;
@@ -27,14 +36,23 @@ internal sealed class MainForm : Form
     private readonly Label _gameStatusLabel;
     private readonly ThemeController _themeController;
     private Color _stateColor = Palette.Acid;
-    private bool _applying;
+
+    // Read from the keyboard hook thread through the _canTrigger delegate, written on the UI
+    // thread. Without volatile the hook can observe a stale value, swallow the keystroke, and
+    // post a toggle that then no-ops on the UI thread — the key press disappears silently.
+    private volatile bool _applying;
+    private volatile bool _stateKnown = true;
+
     private bool _darkMode;
-    private bool _stateKnown = true;
     private bool _hotkeyRegistered;
     private int _runtimeRefreshInProgress;
     private int _runtimeRefreshVersion;
     private FirewallRuleState _firewallState = FirewallRuleState.Inactive;
     private string? _verifiedGamePath;
+    private int _missingGameTicks;
+    private int _leakingTicks;
+    private bool _leakReported;
+    private HashSet<int>? _blockedPortsAtActivation;
 
     internal MainForm(FirewallService? firewall, bool previewMode = false,
         bool previewState = false, bool previewUnknown = false)
@@ -137,7 +155,10 @@ internal sealed class MainForm : Form
             adminReady ? Palette.Yellow : Palette.HotPink, ContentAlignment.MiddleCenter);
         Controls.Add(_gameStatusLabel);
 
-        _refreshTimer = new System.Windows.Forms.Timer { Interval = 1200 };
+        _refreshTimer = new System.Windows.Forms.Timer
+        {
+            Interval = RefreshIntervalMilliseconds
+        };
         _refreshTimer.Tick += (_, _) => QueueRuntimeRefresh();
         FormClosing += HandleClosing;
         Shown += HandleShown;
@@ -365,7 +386,32 @@ internal sealed class MainForm : Form
         {
             snapshot.FirewallError = exception;
         }
+
+        if (snapshot.FirewallState == FirewallRuleState.Active &&
+            GameProcessService.TryGetVerifiedGameProcess(out var processId, out _))
+        {
+            snapshot.BlockedLocalPorts = ReadBlockedLocalPorts(processId);
+        }
         return snapshot;
+    }
+
+    /// <summary>
+    /// The local ports of the game's established connections to blocked addresses. Comparing
+    /// this set across ticks tells an already-open flow — which a new block rule does not tear
+    /// down — apart from a flow that completed its handshake through the active rule.
+    /// </summary>
+    private static HashSet<int> ReadBlockedLocalPorts(int processId)
+    {
+        var ports = new HashSet<int>();
+        foreach (var connection in GameConnectionInspector.GetConnections(processId))
+        {
+            if (connection.State == TcpConnectionState.Established &&
+                RockstarNetworks.IsBlocked(connection.RemoteAddress))
+            {
+                ports.Add(connection.LocalPort);
+            }
+        }
+        return ports;
     }
 
     private void ApplyRuntimeSnapshot(RuntimeSnapshot snapshot, int version)
@@ -399,6 +445,122 @@ internal sealed class MainForm : Form
         else if (snapshot.FirewallError is not null)
         {
             SetUnknownState();
+        }
+
+        EvaluateBlockEffectiveness(snapshot);
+        EvaluateGameLoss(snapshot.HasVerifiedGame);
+    }
+
+    /// <summary>
+    /// Warns when the rule reports Active while the game keeps opening new connections to a
+    /// blocked address. The first Active tick only records a baseline: connections that were
+    /// already established when the rule went up survive it, and flagging those would cry wolf
+    /// on every activation.
+    /// </summary>
+    private void EvaluateBlockEffectiveness(RuntimeSnapshot snapshot)
+    {
+        if (_firewallState != FirewallRuleState.Active || snapshot.BlockedLocalPorts is null)
+        {
+            _blockedPortsAtActivation = null;
+            _leakingTicks = 0;
+            _leakReported = false;
+            return;
+        }
+
+        if (_blockedPortsAtActivation is null)
+        {
+            _blockedPortsAtActivation = snapshot.BlockedLocalPorts;
+            return;
+        }
+
+        var hasNewConnection = false;
+        foreach (var localPort in snapshot.BlockedLocalPorts)
+        {
+            if (!_blockedPortsAtActivation.Contains(localPort))
+            {
+                hasNewConnection = true;
+                break;
+            }
+        }
+
+        if (!hasNewConnection)
+        {
+            _leakingTicks = 0;
+            return;
+        }
+
+        _leakingTicks++;
+        if (_leakingTicks < LeakingTicksBeforeWarning || _leakReported)
+        {
+            return;
+        }
+
+        _leakReported = true;
+        _gameStatusLabel.Text = "BLOCK NOT EFFECTIVE";
+        _gameStatusLabel.BackColor = Palette.HotPink;
+        ShowStatusToast("BLOCK NOT EFFECTIVE", Palette.Yellow,
+            "The rule is active but GTA opened a new connection to a blocked address. " +
+            "Run --diagnose to see the endpoints in use.");
+    }
+
+    /// <summary>
+    /// Restores the link when the verified game is gone while no-save is still active. The
+    /// rule names the game executable by path, so leaving it in place would silently block a
+    /// relaunched GTA — the exact failure this application exists to prevent, inverted.
+    /// A few ticks of tolerance keep a brief detection gap from cutting no-save mid-activity.
+    /// </summary>
+    private void EvaluateGameLoss(bool hasVerifiedGame)
+    {
+        if (hasVerifiedGame || _firewallState != FirewallRuleState.Active)
+        {
+            _missingGameTicks = 0;
+            return;
+        }
+        if (_applying || _firewall is null || !_stateKnown)
+        {
+            return;
+        }
+
+        _missingGameTicks++;
+        if (_missingGameTicks < MissingGameTicksBeforeRestore)
+        {
+            return;
+        }
+
+        _missingGameTicks = 0;
+        RestoreAfterGameLoss();
+    }
+
+    private void RestoreAfterGameLoss()
+    {
+        _applying = true;
+        Interlocked.Increment(ref _runtimeRefreshVersion);
+        _toggle.Enabled = false;
+        UseWaitCursor = true;
+        try
+        {
+            _firewall!.SetNoSaveEnabled(false);
+            SetDisplayedState(false);
+            ShowStatusToast("NO-SAVE RESTORED", Palette.Acid,
+                "The verified GTA process is gone. No-save was disabled automatically.");
+        }
+        catch (Exception exception)
+        {
+            ShowStatusToast("AUTO-RESTORE FAILED", Palette.Yellow, exception.Message);
+            try
+            {
+                ApplyFirewallState(_firewall!.GetState());
+            }
+            catch
+            {
+                SetUnknownState();
+            }
+        }
+        finally
+        {
+            UseWaitCursor = false;
+            _toggle.Enabled = _stateKnown;
+            _applying = false;
         }
     }
 
@@ -737,6 +899,9 @@ internal sealed class MainForm : Form
         internal string? RunningPath { get; set; }
         internal FirewallRuleState? FirewallState { get; set; }
         internal Exception? FirewallError { get; set; }
+        internal HashSet<int>? BlockedLocalPorts { get; set; }
+
+        internal bool HasVerifiedGame => ForegroundPath is not null || RunningPath is not null;
     }
 
 }

@@ -1,12 +1,11 @@
-# AGENTS.md — VaultLoop refactoring brief
+# AGENTS.md — VaultLoop working brief
 
 Audience: an autonomous coding agent working in this repository.
-Task type: **behavior-preserving refactoring only**. No new features, no UI redesign,
-no changes to the security model.
-
-Brief re-verified against the sources on 2026-07-25. Every line count, member name,
-and finding below was read from the current files, not carried over from an earlier
-revision.
+Status: the UI refactoring described by the previous revision of this file is
+**done** (commits `5681e45`..`24ed5eb`, 2026-07-26). This file now describes the
+codebase as it stands, plus the invariants and the validation loop that any future
+change must respect. The historical refactoring plan is preserved in git history at
+commit `5681e45`.
 
 ---
 
@@ -17,414 +16,233 @@ revision.
 | Product | VaultLoop — Windows desktop controller for one narrowly scoped outbound firewall rule |
 | Language / TFM | C# (`LangVersion preview`), `net48`, WinForms, x64, `Nullable enable` |
 | Entry point | `Program.cs` |
-| Build | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build.ps1` |
-| Tests | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test.ps1` |
-| Output | single `publish\VaultLoop.exe` |
-| Namespace | `ReplayGlitchGTA` (assembly name is `VaultLoop`) |
-
-Current source layout and sizes:
+| Build | `dotnet build ReplayGlitchGTA.csproj -c Release` |
+| Ship | `dotnet build ReplayGlitchGTA.csproj -c Release -t:Ship` → `publish\VaultLoop.exe` |
+| Tests | `VaultLoop.exe --selftest` from a **DEBUG** build, elevated terminal |
+| Namespace | `ReplayGlitchGTA` for every type — no sub-namespaces |
+| Tooling | **No PowerShell.** No build or test scripts; `dotnet` plus MSBuild targets only |
 
 ```
-Program.cs              207 lines   startup, single instance, watchdog, --restore
-MainForm.cs            1724 lines   10 types in one file  <-- primary refactoring target
-GameProcessService.cs   420 lines   GTA process discovery + Authenticode validation
-FirewallService.cs      273 lines   exact firewall rule state and mutation
-AppSettingsStorage.cs    86 lines   atomic local preference persistence
-Build.ps1 / Test.ps1                staged build + dependency-free regression checks
-legacy/                             historical AutoHotkey script, must not be run
+Program.cs                     startup, single instance, watchdog, --restore, --diagnose, --selftest, --render-preview
+MainForm.cs              742   window chrome, layout, firewall state orchestration
+SelfTest.cs                    --selftest regression checks (DEBUG only)
+DiagnosticsReport.cs           --diagnose: blocked set, rule state, live game endpoints
+FirewallService.cs             exact firewall rule state and mutation
+GameProcessService.cs          GTA process discovery + Authenticode validation
+AppSettingsStorage.cs     86   atomic local preference persistence
+
+Network/IpPrefix.cs            IPv4/IPv6 prefix parsing, canonical form, containment
+Network/RockstarNetworks.cs    ARIN-sourced Take-Two tables; the blocked set
+Network/GameConnectionInspector.cs  read-only TCP table reader (GetExtendedTcpTable)
+
+Ui/Palette.cs             18   every brand color, once
+Ui/Typography.cs          42   shared process-lifetime Font instances
+Ui/BrutalistControls.cs   72   button + label factories
+Ui/ThemeController.cs     80   theme capture and apply
+Ui/BrutalistDialog.cs     74   dialog base (title bar, drag, border)
+Ui/ShortcutDialog.cs     115
+Ui/GuideDialog.cs        248
+Ui/GuideStepPanel.cs      40
+Ui/StatusToastForm.cs     89
+Ui/BooleanToggle.cs      170
+
+Input/GlobalHotkeyHook.cs 149   WH_KEYBOARD_LL wrapper, Pressed/Released events
+Interop/NativeMethods.cs   55   P/Invoke, structs, message + flag constants
+
+Settings/ShortcutSettings.cs      93
+Settings/ThemeSettings.cs         37
+Settings/GuideProgressSettings.cs 29
+
+legacy/   historical AutoHotkey script, must not be run
 ```
-
-The 10 top-level types in `MainForm.cs`, in file order: `MainForm`,
-`ShortcutSettings`, `ThemeSettings`, `GuideProgressSettings`, `BrutalistDialog`,
-`ShortcutDialog`, `GuideDialog`, `GuideStepPanel`, `StatusToastForm`,
-`BooleanToggle`. Two accessibility helpers are nested inside their owners
-(`GuideStepPanel.GuideStepAccessibleObject`, `BooleanToggle.BooleanToggleAccessibleObject`)
-and must stay nested.
-
-The repository is **still not** under version control as of 2026-07-25 (no `.git`
-directory, although a `.gitignore` exists). Before touching anything,
-run `git init` and commit the current tree as a baseline, so each refactoring step
-can be committed separately and reverted independently. If version control is
-refused, copy the whole project directory to a backup location first.
 
 ---
 
-## 2. Mission
+## 2. Hard constraints — do not violate
 
-Reduce structural duplication and file size in the UI layer without changing a
-single observable behavior. The end state must be:
-
-1. One type per file, in folders that mirror the type's responsibility.
-2. A single definition for each brand color, font, and Win32 interop declaration.
-3. The low-level keyboard hook isolated from `MainForm`.
-4. Identical runtime behavior, identical pixels, identical firewall semantics.
-
-The success criterion for the whole task is: `Test.ps1` passes, and the rendered
-preview PNG of the main window is byte-identical (or visually indistinguishable)
-before and after the refactoring. See §7.
-
----
-
-## 3. Hard constraints — do not violate
-
-These are correctness and safety invariants. A refactoring that breaks any of them
-is a failed refactoring, even if it compiles.
-
-### 3.1 Security model (read `README.md` §Safety model before starting)
+### 2.1 Security model (read `README.md` §Safety model before starting)
 
 - The firewall rule stays scoped to a locally installed, Authenticode-valid Rockstar
   `GTA5.exe` / `GTA5_Enhanced.exe`. Never widen `IsTrustedGameExecutable`.
 - Never relax `FirewallService.IsExactCurrentRule`. Every property comparison in it
   is deliberate: a rule is `Active` only when **all** expected properties match.
-- Never remove the injected-keystroke rejection in the keyboard hook
+- Never remove the injected-keystroke rejection in `GlobalHotkeyHook`
   (`InjectedFlag | LowerIntegrityInjectedFlag`).
 - Never remove a restore path: `FormClosing`, the `finally` block in `Program.Main`,
-  the watchdog process, next-start stale-rule recovery, or `--restore`.
+  the watchdog process, next-start stale-rule recovery, `--restore`, or the
+  game-loss auto-restore in `MainForm.EvaluateGameLoss`. The rule names the game
+  executable by path, so a rule left active after the game exits silently blocks a
+  relaunched GTA.
+- Any field read from the keyboard hook thread must be `volatile` or accessed
+  through `Volatile` / `Interlocked`. That currently means `_capturingShortcut`,
+  `_shortcutDown`, `_gameHotkeyReady`, `_verifiedGameWindow`, and — through the
+  `_canTrigger` delegate — `MainForm._applying` and `MainForm._stateKnown`.
 - Never let the hotkey arm while the verified game is not foreground. The guard is
   two-layered and both layers must survive: `Volatile.Read(ref _gameHotkeyReady)`
-  (set by `RefreshGameContext`) **and** the live re-check
-  `GameProcessService.IsCurrentForegroundWindow(new IntPtr(Interlocked.Read(ref _verifiedGameWindow)))`
-  performed inside the hook callback, plus `!_applying && _stateKnown`.
-  Keep `_verifiedGameWindow` as a `long` accessed through `Interlocked` — it is
-  written on the UI thread and read on the hook thread.
+  (set through `GlobalHotkeyHook.Arm` / `Disarm`) **and** the live re-check
+  `GameProcessService.IsCurrentForegroundWindow(...)` inside the hook callback, plus
+  the `_canTrigger` delegate (`!_applying && _stateKnown` in `MainForm`).
 - Keep `Marshal.FinalReleaseComObject` release order in `FirewallService`
   (`rule` → `rules` → `policy`) and keep every COM release inside `finally`.
+- `Program.Main` must keep `NativeMethods.RestrictDllSearchPathToSystem32()` as its
+  **first statement**. `wintrust.dll` and `iphlpapi.dll` are not KnownDLLs, so
+  without it the directory holding the executable is searched before System32 and
+  anyone able to write there gets code execution inside an elevated process. This
+  was reproduced and the fix verified by planting a file named `iphlpapi.dll` next
+  to the executable: unhardened, it is loaded and the inspector checks fail;
+  hardened, System32 wins and they pass.
+- Ship to a directory that is not writable by `Authenticated Users`. The DLL search
+  restriction does not stop the executable itself from being replaced — only ACLs
+  do. The repository `publish\` directory grants Modify to Authenticated Users and
+  is a development output, not a deployment target.
+- Keep the settings reparse-point checks in `AppSettingsStorage` on both the
+  directory and the files, on the read and write paths: the process is elevated
+  while `%LOCALAPPDATA%` is controlled by the unprivileged user.
+- Keep `TargetsOnlyManagedAddresses` an **exact set match**. Accepting a superset,
+  a subset, or a broader prefix would let a rule that blocks more than intended
+  read back as `Active`.
+- `GameConnectionInspector` is read-only and reports only the verified game
+  process. Do not extend it to arbitrary processes.
+- Keep the hook delegate in a field so the GC cannot collect it while installed, and
+  keep install/uninstall in `OnHandleCreated` / `OnHandleDestroyed`.
 
-### 3.2 Compatibility surface — values that must not change
+### 2.2 Compatibility surface — values that must not change
 
 - Firewall rule names: `"VaultLoop - No Save"`, `"Replay Glitch GTA V - No Save"`,
   `"123456"`; marker `"VaultLoop managed rule v2"`; grouping `"VaultLoop"`.
-- Remote address `192.81.241.171` and the three accepted forms.
+- The blocked address set is configurable through `endpoints.txt`
+  (`BlockedEndpointsSettings`), defaulting to `RockstarNetworks.DefaultBlocked`.
+  Every configured entry **must** be validated as lying inside a Rockstar Online
+  Services allocation before use — that guard is the only thing that makes a
+  user-editable file safe for a rule written by an elevated process. Never accept
+  an entry outside those allocations, and never let a Zynga or Take-Two corporate
+  range through.
+- Resolve the set **once per process** (`RockstarNetworks.Configuration` is a
+  `Lazy`). If the file were re-read mid-run, the rule already written to Windows
+  and the check that validates it would disagree and the state would read Invalid.
+- The working set is the single address `192.81.241.171`, confirmed in play on
+  2026-07-26: the game reports `SAVING FAILED` and the session survives. **Do not
+  widen it.** Blocking the surrounding `192.81.241.0/24` reaches Rockstar
+  authentication and drops the session mid-activity, before any save occurs.
+- Two failures previously masked each other, and both must stay fixed:
+  resolving the game path through `Process.MainModule` alone fails against
+  anti-cheat protection, so no rule was ever created and no-save was silently a
+  no-op; and the widened address set broke authentication once detection worked.
+  See `README.md` §Blocked address set.
+- The pre-1.3 single endpoint `192.81.241.171` and its three accepted forms must
+  keep being recognized by `FirewallService.TargetsOnlyLegacyAddress`. Dropping it
+  orphans a rule when a user upgrades while no-save is active, which leaves the
+  game permanently blocked.
+- Do not bump `RuleMarker` ("VaultLoop managed rule v2"). Rule removal matches on
+  it; a new marker makes older rules unremovable, because the historical fallback
+  requires a blank `ApplicationName` that those rules do not have.
 - Settings file names and formats: `shortcut.txt` (`"{(int)modifiers}|{(int)key}"`),
   `theme.txt` (`dark` / `light`), `guide-step.txt` (`1`–`6`), directories
   `%LOCALAPPDATA%\VaultLoop` and legacy `%LOCALAPPDATA%\ReplayGlitchGTA`.
 - Mutex name `Global\ReplayGlitchGTA.NoSave`.
-- Assembly attributes in `Program.cs` and the version `1.2.0.0` in `app.manifest`
-  (`Test.ps1` asserts the version; `Build.ps1` reports it).
-- CLI arguments: `--watchdog <pid>`, `--restore`, `--render-preview <path> [on|unknown]`.
-- `app.manifest`: `requireAdministrator`, `PerMonitorV2`, `longPathAware`.
+- Assembly attributes in `Program.cs` and the version `1.2.0.0` in `app.manifest`.
+- CLI arguments: `--watchdog <pid>`, `--restore`, `--diagnose`, and, in `DEBUG`
+  builds, `--render-preview <path> [on|unknown]` and `--selftest`.
+- `app.manifest`: `requireAdministrator`, `PerMonitorV2`, `longPathAware`, and the
+  compatibility GUID `{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}`.
 - All user-facing strings stay English and byte-identical.
 
-### 3.3 Reflection contract with `Test.ps1`
+### 2.3 Self-test contract
 
-`Test.ps1` reaches into non-public members by name. Renaming or moving any of the
-following breaks the test suite. Keep the fully qualified names **exactly** as they
-are — in particular, do not introduce sub-namespaces; new folders must keep
-`namespace ReplayGlitchGTA;`.
+`SelfTest.Run` calls these members **directly**, so renaming or changing a signature
+is a compile error rather than a silent gap — that is the point, do not reintroduce
+reflection by name. Keep them reachable (`internal` or wider) inside the assembly:
 
-| Reflected member | Required shape |
-| --- | --- |
-| `ReplayGlitchGTA.GameProcessService.IsSupportedProcessName` | static, non-public, `(string) -> bool` |
-| `ReplayGlitchGTA.GameProcessService.IsCurrentForegroundWindow` | static, non-public, `(IntPtr) -> bool`; must return `false` for `IntPtr.Zero` |
-| `ReplayGlitchGTA.FirewallService.TargetsOnlyRemoteAddress` | static, non-public, `(string) -> bool` |
-| `ReplayGlitchGTA.ShortcutDialog.IsValidShortcut` | static, non-public, `(Keys, Keys) -> bool` |
-| `ReplayGlitchGTA.ShortcutSettings.Format` | static, non-public, `(Keys, Keys) -> string`; `(Alt, D8)` must yield `"ALT+8"` |
-| `ReplayGlitchGTA.Program.HasSupportedRuntime` | static, non-public, no args, `-> bool` |
-| `ReplayGlitchGTA.FirewallService.GetState` | instance, non-public, no args |
-| `ReplayGlitchGTA.FirewallService` | must stay instantiable by `Activator.CreateInstance(type, true)` — do not add a constructor with parameters unless a parameterless one remains |
-| `ReplayGlitchGTA.MainForm` | `GetConstructors(Instance,NonPublic)[0]` invoked with `(null, true, false, false)`; the built form must keep `Text == "VaultLoop"` and `ClientSize.Width >= 780`, and must survive `Dispose()` |
-| Assembly | manifest resource named `ReplayGlitchLogo.png`, version `1.2.0.0`, runtime `v4.0.30319` |
-| `app.manifest` | must still contain `PerMonitorV2`, `requireAdministrator`, and the compatibility GUID `{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}` |
+`GameProcessService.IsSupportedProcessName`, `GameProcessService.IsCurrentForegroundWindow`,
+`FirewallService.TargetsOnlyManagedAddresses`, `FirewallService.TargetsOnlyLegacyAddress`,
+`FirewallService.GetState`, `ShortcutDialog.IsValidShortcut`, `ShortcutSettings.Format`,
+`Program.HasSupportedRuntime`, `RockstarNetworks.IsBlocked`,
+`RockstarNetworks.GetOnlineServiceName`, `IpPrefix.TryParse`,
+`GameConnectionInspector.GetConnections`, and the
+`MainForm(FirewallService?, bool, bool, bool)` constructor with its preview defaults.
 
-`MainForm` is the fragile one: the test takes constructor **index 0**. Do not add a
-second constructor, and do not change the parameter order or count of the existing
-one. If a change there becomes unavoidable, update `Test.ps1` in the same commit and
-say so explicitly in your report.
+### 2.4 Build constraints
 
-### 3.4 Build constraints
-
-- `Build.ps1` passes `-p:TreatWarningsAsErrors=true`. Any new compiler warning
-  (including nullable warnings, `CS0067` unused event, unused field, obsolete API)
-  fails the build. Compile clean.
-- No new NuGet packages, no new target frameworks, no analyzers, no `.editorconfig`
-  churn, no source generators.
-- The project is SDK-style with default globbing: new `.cs` files under the project
-  directory are compiled automatically. Do not add explicit `<Compile>` items.
-- `Build.ps1` fails if the staged Release output directory contains **any file other
-  than `VaultLoop.exe`**. Nothing may introduce a satellite assembly, a `.pdb`
-  (`DebugType none` / `DebugSymbols false` must stay), a config file, or a
-  referenced DLL. `ReplayGlitchGTA.csproj` must keep `AssemblyName VaultLoop`,
-  `RootNamespace ReplayGlitchGTA`, `Nullable enable`, `LangVersion preview`,
-  `GenerateAssemblyInfo false`, x64, and the `Microsoft.CSharp` reference (the
-  firewall COM code is `dynamic`).
+- `TreatWarningsAsErrors` is set in the project file. Any new compiler warning
+  (nullable, `CS0067`, unused field, obsolete API) fails the build. Compile clean.
+- `net48` resolves against `$(SystemRoot)\Microsoft.NET\Framework64\v4.0.30319`
+  (`AutomaticallyUseReferenceAssemblyPackages=false`) so the build works offline.
+  This machine has no NuGet access — a change that needs a package will not build.
+- Build gates that must keep passing: `ValidateFrameworkPath`, `ValidateManifest`,
+  `ValidateSingleFileOutput` (a release build emits `VaultLoop.exe` and nothing else,
+  hence `DebugType none`, no satellite assemblies, no copy-local references).
+- No new NuGet packages, target frameworks, analyzers, or source generators.
+- SDK-style globbing: new `.cs` files under the project directory compile
+  automatically. Do not add explicit `<Compile>` items.
 - Do not modify `bin/`, `obj/`, `publish/`, `Assets/`, or `legacy/`.
+- No `.ps1` files, ever. Automation goes into MSBuild targets or the application's
+  own CLI arguments.
 
 ---
 
-## 4. Findings to act on
+## 3. Validation
 
-These were identified by reading the current sources. Each is duplication or
-structural noise, not a behavior bug.
+### 3.1 Build (mandatory after every change)
 
-1. **`MainForm.cs` holds 10 top-level types** (`MainForm`, `ShortcutSettings`,
-   `ThemeSettings`, `GuideProgressSettings`, `BrutalistDialog`, `ShortcutDialog`,
-   `GuideDialog`, `GuideStepPanel`, `StatusToastForm`, `BooleanToggle`).
-2. **The palette is redeclared across four types.** Exact current counts:
-   `Ink` and `Paper` ×4 (`MainForm`, `BrutalistDialog`, `StatusToastForm`,
-   `BooleanToggle`); `Yellow` and `Acid` ×3 (`MainForm`, `BrutalistDialog`,
-   `BooleanToggle`); `HotPink` ×2 (`MainForm`, `BooleanToggle`); `Blue`,
-   `DarkCanvas`, `DarkSurface` ×2 (`MainForm`, `BrutalistDialog`); `Cream` only in
-   `MainForm`; `AlertRed` only in `BrutalistDialog`. The guide's neutral
-   `Color.FromArgb(246, 242, 228)` is inlined twice inside `GuideDialog`
-   (`BuildStep` line ~1359, `SetCurrentStep` line ~1411).
-3. **Win32 interop is duplicated.** `ReleaseCapture` and `SendMessage` are declared
-   in both `MainForm` and `BrutalistDialog`. `MainForm` names the constants
-   (`NonClientLeftButtonDown = 0x00A1`, `HitCaption = 0x0002`) while
-   `BrutalistDialog.BeginDrag` passes the raw literals `0x00A1, 0x0002`.
-4. **Four near-identical button factories**: `MainForm.MakeWindowButton`,
-   `MakeTextButton`, `MakeActionButton`, and `BrutalistDialog.CreateButton`. They
-   differ only in border size, hover colors, font, and text alignment.
-5. **Fonts are allocated inline.** `new Font(...)` appears **32 times** in
-   `MainForm.cs`. Most are handed to a control and never disposed (harmless, but
-   duplicated); the two in `BooleanToggle.OnPaint` (`labelFont`, `knobFont`) are
-   `using` locals re-created on **every paint**. Controls do not own their `Font`,
-   so shared cached instances are safe and strictly better — but when moving the
-   two paint fonts to `Typography`, the `using` must be dropped or the shared
-   instance is destroyed after the first paint.
-6. **`MainForm` mixes five concerns**: window chrome, layout, theming, the global
-   keyboard hook, and firewall state orchestration.
-7. **Thread-affinity inconsistency in the hook fields**: `_capturingShortcut` and
-   `_shortcutDown` are plain `bool` fields written from the UI thread and read or
-   written from the hook callback thread, while the adjacent `_gameHotkeyReady`
-   uses `Volatile` and `_verifiedGameWindow` uses `Interlocked`.
-8. *(resolved before this revision — no action needed)* The four cleanups the
-   earlier brief listed here are already done in the current tree:
-   `FirewallService.IsNoSaveEnabled()` no longer exists, `ShortcutSettings.Format`
-   already uses the imported `List<string>`, `GameProcessService.cs` no longer has
-   the redundant `#nullable enable`, and `MainForm` already overrides
-   `Dispose(bool)` to dispose `_refreshTimer` and `_logoImage` (lines 204-215).
-   Do not "re-fix" any of them.
-9. **`GuideStepPanel` is a UI type living in `MainForm.cs`** with its nested
-   accessible object; it belongs next to `GuideDialog`, which is its only consumer.
-
----
-
-## 5. Target structure
-
-Keep every type in `namespace ReplayGlitchGTA;`. Folders are for humans only.
-
-```
-Program.cs
-MainForm.cs                    MainForm only (~550-650 lines after extraction)
-FirewallService.cs             unchanged
-GameProcessService.cs          unchanged
-AppSettingsStorage.cs          unchanged
-
-Ui/Palette.cs                  internal static class Palette      — every brand color, once
-Ui/Typography.cs               internal static class Typography   — cached shared Font instances
-Ui/BrutalistControls.cs        internal static class BrutalistControls — label/button factories
-Ui/ThemeController.cs          internal sealed class ThemeController   — color capture + apply
-Ui/BrutalistDialog.cs          internal abstract class BrutalistDialog
-Ui/ShortcutDialog.cs           internal sealed class ShortcutDialog
-Ui/GuideDialog.cs              internal sealed class GuideDialog
-Ui/GuideStepPanel.cs           internal sealed class GuideStepPanel (+ its accessible object)
-Ui/StatusToastForm.cs          internal sealed class StatusToastForm
-Ui/BooleanToggle.cs            internal sealed class BooleanToggle (+ its accessible object)
-
-Input/GlobalHotkeyHook.cs      internal sealed class GlobalHotkeyHook  — WH_KEYBOARD_LL wrapper
-Interop/NativeMethods.cs       internal static class NativeMethods     — P/Invoke, structs, constants
-
-Settings/ShortcutSettings.cs
-Settings/ThemeSettings.cs
-Settings/GuideProgressSettings.cs
+```sh
+dotnet build ReplayGlitchGTA.csproj -c Release
 ```
 
----
+A clean run also proves the manifest and single-file gates passed.
 
-## 6. Work plan
+### 3.2 Self-test (mandatory for anything touching behavior)
 
-Execute the steps **in order**. After every step: build, run `Test.ps1`, commit.
-Do not batch steps into one commit. If a step turns out to be riskier than
-described, stop at the end of the previous step and report rather than improvising.
+From an **elevated** terminal — the manifest forces elevation:
 
-### Step 1 — Baseline
-`git init`, commit the tree as-is. Build once and run `Test.ps1` to record the
-starting state. Capture the reference preview PNGs (§7.3). If the baseline test
-already fails, report that and stop — do not refactor on top of a red suite.
-
-### Step 2 — Mechanical file split (no edits to bodies)
-Move each of the 9 non-`MainForm` types out of `MainForm.cs` into the target files
-of §5, adding only the `using` directives each file needs. Do not rename anything,
-do not merge anything, do not change any member body. This step must be a pure
-cut-and-paste. **Done when:** `Test.ps1` passes and `git diff --stat` shows only
-moves plus `using` lines.
-
-### Step 3 — `Ui/Palette.cs`
-Create `internal static class Palette` holding one `internal static readonly Color`
-per brand color, with these exact values:
-
-```
-Ink        17, 17, 17      Cream      255, 246, 218   Paper      255, 253, 245
-Yellow     255, 215, 56    Blue        91, 134, 255   Acid       185, 255, 61
-HotPink    255, 83, 112    AlertRed   232, 54, 70
-DarkCanvas 20, 20, 20      DarkSurface 34, 34, 34     GuideNeutral 246, 242, 228
+```sh
+dotnet build ReplayGlitchGTA.csproj -c Debug -o obj/preview
+obj/preview/VaultLoop.exe --selftest
 ```
 
-Delete the duplicated declarations from `MainForm`, `BrutalistDialog`,
-`StatusToastForm`, and `BooleanToggle`, and point all references at `Palette.*`.
-Note that `BrutalistDialog`'s copies are `protected static readonly` and are used
-**unqualified** inside `ShortcutDialog` and `GuideDialog`; every one of those uses
-must be requalified in the same step or the build breaks. Verify every ARGB value
-survives the move unchanged — this is the step most likely to silently alter pixels.
-**Done when:** the preview PNGs still match the reference.
+Expected: `Result = PASS`, exit code `0`, `FirewallState` one of `Inactive` /
+`Active` / `Invalid`. The run is read-only and never mutates Windows Firewall. Add
+a check to `SelfTest.cs` whenever you add an invariant worth pinning.
 
-### Step 4 — `Ui/Typography.cs`
-Replace inline `new Font(...)` calls with shared `static readonly Font` fields
-(`TitleImpact26`, `Mono10Bold`, `Body10`, …; name them by role, not by size).
-Every font must keep its exact family, size, and style — the set in use today is
-Impact 26/23/22/20/18, Bahnschrift 18B/11B/10/10B/9.5B/9/9B/8.5B/8.4/8B, and
-Consolas 16B/10B/9B/8.5B (B = `FontStyle.Bold`). Prioritize
-`BooleanToggle.OnPaint`, which currently allocates two fonts per paint inside
-`using` statements — drop those `using`s when switching to the shared instances. Fonts are process-lifetime singletons and must
-never be disposed by a control.
-**Done when:** no `new Font(` remains outside `Typography`, and the preview PNGs
-still match.
+Changing anything the rule writes into Windows Firewall also needs a round-trip
+check, because Windows rewrites what it is given (`192.81.241.0/24` comes back as
+`192.81.241.0/255.255.255.0`). Verify it **without mutating the firewall** by
+creating a standalone `HNetCfg.FWRule` COM object, setting the property, and
+reading it back — the object is never added to the `Rules` collection.
 
-### Step 5 — `Interop/NativeMethods.cs`
-Move `MainForm`'s seven `[DllImport]` declarations (`SetWindowsHookEx`,
-`UnhookWindowsHookEx`, `CallNextHookEx`, `GetAsyncKeyState`, `GetModuleHandle`,
-`ReleaseCapture`, `SendMessage`), the `LowLevelKeyboardData` struct, the
-`LowLevelKeyboardProcedure` delegate, and the message/flag constants
-(`LowLevelKeyboardHook = 13`, `KeyDownMessage 0x0100`, `KeyUpMessage 0x0101`,
-`SystemKeyDownMessage 0x0104`, `SystemKeyUpMessage 0x0105`,
-`LowerIntegrityInjectedFlag 0x02`, `InjectedFlag 0x10`, `AltDownFlag 0x20`,
-`NonClientLeftButtonDown 0x00A1`, `HitCaption 0x0002`) into one internal static
-class. Delete the duplicate
-`ReleaseCapture` / `SendMessage` declarations from `BrutalistDialog` and replace
-its raw `0x00A1, 0x0002` literals with the named constants. Keep marshalling
-attributes (`SetLastError`, `CharSet`, `StructLayout`) byte-for-byte identical.
-Leave `GameProcessService`'s WinTrust/kernel32 interop where it is — it is
-cohesive with its only caller and moving it buys nothing.
+### 3.3 Pixel parity (mandatory for any UI change)
 
-### Step 6 — `Ui/BrutalistControls.cs`
-Consolidate the four button factories into a single factory with explicit
-parameters for border size, hover/pressed colors, font, and text alignment, plus
-the `MakeLabel` helper. Every produced button must keep exactly its current
-`FlatAppearance` values and hover handlers:
-
-- `MakeActionButton` — Bahnschrift 8B, `BorderColor = Ink`, `BorderSize = 3`,
-  `MouseOverBackColor = Blue`, `MouseEnter → ForeColor = Ink`,
-  `MouseLeave → ForeColor` back to the captured original.
-- `MakeWindowButton` — Bahnschrift 11B, `Ink`/`Paper`, `BorderSize = 0`, hover
-  **and** pressed set to the per-button hover color, same enter/leave fore-color
-  swap.
-- `MakeTextButton` — caller-supplied font/colors, `BorderSize = 0`, hover and
-  pressed set to the button's own background (i.e. no visible hover feedback),
-  `TextAlign = MiddleCenter`, no enter/leave handlers.
-- `BrutalistDialog.CreateButton` — Bahnschrift 9B, `BorderColor = Ink`,
-  `BorderSize = 3`, no hover colors and no handlers; it is `protected static` and
-  called from `ShortcutDialog` and `GuideDialog`, and the dialog's own close button
-  then *overrides* `BorderSize = 0` and `MouseOverBackColor = AlertRed` after
-  construction. Keep that post-construction override intact.
-
-All four also set `FlatStyle.Flat`, `Cursor = Hand`, `UseVisualStyleBackColor =
-false`. Do not "improve" any of these.
-
-### Step 7 — `Ui/ThemeController.cs`
-Move `CaptureThemeColors` / `ApplyTheme` and the two `Dictionary<Control, Color>`
-maps out of `MainForm`. The controller receives the form and the set of controls
-excluded from capture (`_stateKicker`, `_stateTitle`, `_stateDetail`, `_toggle`).
-Preserve the exact mapping rules: capture recurses through the whole control tree;
-`Cream → DarkCanvas` and `Paper → DarkSurface` for backgrounds; foreground becomes
-`Paper` only when `_darkMode && originalFore == Ink && (originalBack == Cream ||
-originalBack == Paper)`, otherwise it is restored to the captured original. The
-form's own `BackColor`/`ForeColor`, the `_themeButton` text and `AccessibleName`
-swap, and the trailing `Invalidate(true)` are part of `ApplyTheme` and must keep
-happening in that order. Note `CaptureThemeColors(this)` runs **before**
-`ApplyTheme()` in the constructor — keep that ordering.
-
-### Step 8 — `Input/GlobalHotkeyHook.cs`
-Extract the `WH_KEYBOARD_LL` install/uninstall and the callback filtering into a
-class that raises `Pressed` / `Released` events and exposes an `Armed` flag plus the
-current `(modifiers, key)`. `MainForm` keeps only: subscribe, arm/disarm from
-`RefreshGameContext`, and marshal to the UI thread via `BeginInvoke`.
-Preserve exactly, in this order: the `code >= 0` guard, the injected-flag rejection
-(`InjectedFlag | LowerIntegrityInjectedFlag` → `CallNextHookEx`), the
-`!_capturingShortcut` bypass combined with the
-`VirtualKeyCode == (uint)_shortcutKey` test, the exact modifier equality test
-(`pressedModifiers == _shortcutModifiers`, including the `GetAsyncKeyState`
-reads for Ctrl/Shift and the `AltDownFlag` read from the event), the full
-`canTrigger` conjunction (`keyDown && modifiersMatch && Volatile.Read(ref
-_gameHotkeyReady) && GameProcessService.IsCurrentForegroundWindow(...) &&
-!_applying && _stateKnown`), the `canTrigger || (keyUp && _shortcutDown)` gate,
-the key-down/key-up edge tracking through `_shortcutDown`, the
-`!IsDisposed && IsHandleCreated` check before `BeginInvoke`, and the
-`return (IntPtr)1` swallow that stops the keystroke from reaching the game.
-Only a *key-down* edge dispatches `ToggleState(fromHotkey: true)`; the key-up
-branch merely clears `_shortcutDown`. Keep the hook delegate in a field so the GC
-cannot collect it while installed, keep `_hotkeyRegistered` driving the
-`HandleShown` warning message, and keep install/uninstall in `OnHandleCreated` /
-`OnHandleDestroyed` (installed only when `!_previewMode`). Make
-`_capturingShortcut` and `_shortcutDown` `volatile` for consistency with
-`_gameHotkeyReady`.
-This is the highest-risk step. If anything is ambiguous, keep the current code
-shape and note the ambiguity instead of guessing.
-
-### Step 9 — Final consistency pass
-The four cleanups this step used to list are already applied in the current tree
-(see finding 8) — do not redo them. What remains:
-
-- Verify no `using` directive, field, or constant was left orphaned in `MainForm.cs`
-  by steps 2-8 (`TreatWarningsAsErrors` will catch unused fields, not unused
-  `using`s — check by hand).
-- Confirm `MainForm.Dispose(bool)` still disposes `_refreshTimer` before
-  `base.Dispose(disposing)` and `_logoImage` after it, and that the new
-  `GlobalHotkeyHook` is uninstalled on handle destruction rather than in `Dispose`.
-- Re-run the full validation set (§7) one last time, including the manual smoke.
-
----
-
-## 7. Validation
-
-### 7.1 Per step (mandatory)
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test.ps1
+```sh
+obj/preview/VaultLoop.exe --render-preview obj/preview/after-off.png
+obj/preview/VaultLoop.exe --render-preview obj/preview/after-on.png on
+obj/preview/VaultLoop.exe --render-preview obj/preview/after-unknown.png unknown
+sha256sum obj/preview/before-*.png obj/preview/after-*.png
 ```
 
-Expected: `Result = PASS`, `FirewallState` one of `Inactive` / `Active` / `Invalid`.
-`Test.ps1` invokes `Build.ps1` itself, so a passing run also proves the build is
-clean under `TreatWarningsAsErrors`. It does not enable no-save and does not mutate
-Windows Firewall.
+**Do not compare against stored PNGs.** Preview mode never reads the firewall and
+forces the "admin ready" status label, but it does read
+`%LOCALAPPDATA%\VaultLoop\theme.txt` and `shortcut.txt`, and it is sensitive to
+display state. `obj/preview/before-*.png` were captured on 2026-07-26 and no longer
+reproduce on the same machine, because the stored preferences changed in between —
+a stale reference produces a false regression, which costs more time than it saves.
 
-### 7.2 Full build
+Compare against a freshly built previous commit instead. This isolates the code
+change from the environment, since both binaries then run under identical settings:
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build.ps1
+```sh
+git worktree add /tmp/baseline HEAD --detach
+dotnet build /tmp/baseline/ReplayGlitchGTA.csproj -c Debug -o /tmp/baseline-out
+for variant in "" on unknown; do
+  /tmp/baseline-out/VaultLoop.exe --render-preview /tmp/base-${variant:-off}.png $variant
+  obj/preview/VaultLoop.exe --render-preview /tmp/changed-${variant:-off}.png $variant
+done
+sha256sum /tmp/base-*.png /tmp/changed-*.png
+git worktree remove /tmp/baseline --force
 ```
 
-### 7.3 Pixel parity (the real regression net for a UI refactor)
+If you must touch the user's preference files to reproduce a state, back them up
+and restore them in the same command.
 
-`--render-preview` is `DEBUG`-only and never touches the firewall, but the manifest
-forces elevation, so run it from an elevated shell:
-
-```powershell
-dotnet build .\ReplayGlitchGTA.csproj -c Debug -o obj\preview
-.\obj\preview\VaultLoop.exe --render-preview .\obj\preview\before-off.png
-.\obj\preview\VaultLoop.exe --render-preview .\obj\preview\before-on.png on
-.\obj\preview\VaultLoop.exe --render-preview .\obj\preview\before-unknown.png unknown
-Get-FileHash .\obj\preview\before-*.png -Algorithm SHA256
-```
-
-If that `dotnet build` fails to resolve the `net48` reference assemblies, mirror the
-two switches `Build.ps1` uses:
-`-p:FrameworkPathOverride=$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319`
-`-p:AutomaticallyUseReferenceAssemblyPackages=false`.
-
-Preview mode never reads the firewall, forces the "admin ready" status label, and
-takes the `previewState` / `previewUnknown` arguments straight from the command
-line. It **does** still read `%LOCALAPPDATA%\VaultLoop\theme.txt` and
-`shortcut.txt`, which drive the theme colors and the two shortcut captions — do not
-change either preference between the `before-*` and `after-*` captures, or the
-hashes will differ for a non-refactoring reason. With those held constant, on the
-same machine and DPI, a hash difference is a real pixel difference.
-
-Capture these three at step 1, re-capture as `after-*.png` at the end of steps 3, 4,
-6, and 7, and compare hashes on the same machine and display scaling. A hash
-mismatch means the UI changed — investigate before continuing. If hashes differ for
-a non-visual reason, fall back to an explicit visual comparison and say so.
-
-### 7.4 Manual smoke (end of task, once)
+### 3.4 Manual smoke (end of a task, once)
 
 Run `publish\VaultLoop.exe` elevated and confirm: window renders identically; the
 toggle is disabled or errors without a verified GTA process; `HOW TO USE` opens and
@@ -434,39 +252,62 @@ and restores. Do not test with a real game session enabled unless the user asks.
 
 ---
 
-## 8. Out of scope — do not do these
+## 4. Out of scope unless the user asks
 
 - Any change to layout coordinates, sizes, spacing, or the hardcoded pixel
-  rectangles. The absolute positioning is ugly; leave it alone. Converting to
-  layout panels is a separate, user-approved task.
+  rectangles. The absolute positioning is deliberate; converting to layout panels is
+  a separate, user-approved task.
 - Migrating off `net48`, off WinForms, or to `dynamic`-free firewall COM interop.
 - Adding logging, telemetry, DI, MVVM, async/await, or an abstraction layer over
   `FirewallService` / `GameProcessService`.
-- Adding unit-test projects or test frameworks. `Test.ps1` is dependency-free by
+- Adding unit-test projects or test frameworks — `--selftest` is dependency-free by
   design; keep it that way.
 - Changing the watchdog, single-instance, or recovery strategy.
 - Localization, string edits, wording changes, or rebranding.
-- Touching `legacy/`, `README.md` content, `CHANGELOG.md` history, or bumping the
-  version. If the user wants a changelog entry, they will ask.
-- "Fixing" anything in §4 that is not explicitly listed as a step, and redoing the
-  cleanups listed as already resolved in finding 8.
-- Renaming, resigning the accessibility of, or relocating to a sub-namespace any
-  member listed in the §3.3 reflection table.
+- Touching `legacy/`, `CHANGELOG.md` history, or bumping the version.
 
-If you find a genuine bug while refactoring, **do not fix it**. Record it in the
-final report with file and line, and continue.
+If you find a genuine bug, report it with file and line instead of fixing it inside
+an unrelated change.
 
 ---
 
-## 9. Report format
+## 5. Measured facts
 
-Finish with a compact report:
+Numbers from this machine on 2026-07-26; re-measure before reasoning about cost.
 
-1. Table: step → files touched → `Test.ps1` result → preview-hash result.
-2. Any deviation from this brief, with the reason.
-3. Bugs found but deliberately not fixed (file:line, one line each).
-4. Line counts of `MainForm.cs` before and after.
-5. Anything left undone and why.
+- `FirewallService.GetState()` — median **14 ms**, max 17.5 ms. This sets the
+  `ConfirmState` budget: 7 attempts with exponential backoff ≈ 2 s total.
+- `GameProcessService.TryFindVerifiedRunningGame` — median 5.1 ms.
+- `TryGetVerifiedForegroundGame` — median 1.4 ms.
+- One refresh tick therefore costs ~15-20 ms on a thread-pool thread, about 1.5 %
+  of one core at the 1200 ms interval. **The polling loop is not a performance
+  problem**; do not "optimize" it without new measurements. The one real spike is
+  the Authenticode re-verification of the ~100 MB game executable, which the trust
+  cache limits to once per 300 s.
 
-State failures plainly, with the actual output. Do not report a step as done unless
-the build and `Test.ps1` both passed for it.
+A block rule does **not** tear down an already established TCP flow. "A connection
+to a blocked address exists" is therefore not evidence that the block failed; only
+a connection whose **local port** appeared after the rule went active is, because
+its handshake had to complete through the rule. `MainForm.EvaluateBlockEffectiveness`
+and `--diagnose` both depend on this distinction.
+
+## 6. Known follow-ups
+
+- `BrutalistControls.CreateButton` takes eleven positional parameters, four of them
+  `Color?`; named wrappers (`WindowButton` / `TextButton` / `ActionButton` /
+  `DialogButton`) would make the call sites readable and prevent a silent
+  hover/pressed swap.
+- `GlobalHotkeyHook.Released` is raised but never subscribed.
+- `Typography.StatusDetail` doubles as the dialog button font in `BrutalistDialog`;
+  the name no longer matches every use.
+- `MainForm` still mixes window chrome, layout, and firewall state orchestration;
+  extracting a layout builder and a state presenter is the next natural step.
+- `--restore` and `--diagnose` run before the single-instance mutex is taken, so
+  they can mutate or read the firewall while the main window is doing the same.
+- The watchdog is never respawned if it dies, and does not verify that the pid it
+  waits on is really VaultLoop (the reuse window is tiny — the parent has just
+  spawned it — so this is theoretical).
+- `PolicyCanEnforce` returning false because Windows Firewall is switched off is
+  surfaced as `INVALID` / "CLICK RESTORE", which misdescribes the cause.
+- `--render-preview` pumps a single `Application.DoEvents()` before capturing; a
+  `Refresh()` would make the pixel-parity net deterministic by construction.

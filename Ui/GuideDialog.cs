@@ -14,8 +14,6 @@ internal sealed class GuideDialog : BrutalistDialog
         base("HOW TO USE NO-SAVE", GetGuideSize(), darkMode ? Palette.DarkCanvas : Palette.Paper)
     {
         _darkMode = darkMode;
-        AutoScroll = true;
-        AutoScrollMinSize = new Size(0, 700);
         var canvas = darkMode ? Palette.DarkCanvas : Palette.Paper;
         var textColor = darkMode ? Palette.Paper : Palette.Ink;
         Controls.Add(new Label
@@ -44,6 +42,16 @@ internal sealed class GuideDialog : BrutalistDialog
         };
         Controls.Add(_currentStepLabel);
 
+        var scrollPanel = new Panel
+        {
+            Bounds = new Rectangle(28, 120, 664 + SystemInformation.VerticalScrollBarWidth, 526),
+            AutoScroll = true,
+            AutoScrollMinSize = new Size(0, 636),
+            BackColor = canvas,
+            TabStop = false
+        };
+        Controls.Add(scrollPanel);
+
         var titles = new[]
         {
             "START THE ACTIVITY",
@@ -67,7 +75,7 @@ internal sealed class GuideDialog : BrutalistDialog
         {
             var stepNumber = index + 1;
             var panel = BuildStep(stepNumber, titles[index], descriptions[index],
-                new Rectangle(28, 120 + index * 64, 664, 56), darkMode);
+                new Rectangle(0, index * 64, 664, 56), darkMode);
             foreach (Control child in panel.Controls)
             {
                 child.Click += (_, _) =>
@@ -113,26 +121,38 @@ internal sealed class GuideDialog : BrutalistDialog
                 }
             };
             _steps[index] = panel;
-            Controls.Add(panel);
+            scrollPanel.Controls.Add(panel);
         }
 
-        Controls.Add(new Label
+        scrollPanel.Controls.Add(new Label
+        {
+            Text = "BONUS — ONE REPLAY GLITCH AT A TIME\n" +
+                   "After one successful replay glitch, do not attempt another one consecutively. " +
+                   "A second consecutive attempt resets the progress of any heist or activity, " +
+                   "but you keep the money already earned. This is expected behavior, not a bug.",
+            Bounds = new Rectangle(0, 390, 664, 88),
+            BackColor = Palette.Yellow,
+            ForeColor = Palette.Ink,
+            Font = Typography.SmallBold,
+            Padding = new Padding(14, 9, 14, 9)
+        });
+        scrollPanel.Controls.Add(new Label
         {
             Text = "TIP — COOLDOWN\n" +
                    "Group heists: 48 minutes. Solo Cayo Perico: 144 minutes. " +
                    "Other activities may use a different timer.",
-            Bounds = new Rectangle(28, 510, 664, 48),
+            Bounds = new Rectangle(0, 488, 664, 48),
             BackColor = Palette.Blue,
             ForeColor = Palette.Ink,
             Font = Typography.SmallBold,
             Padding = new Padding(14, 6, 14, 6)
         });
-        Controls.Add(new Label
+        scrollPanel.Controls.Add(new Label
         {
             Text = "WARNING — USE AT YOUR OWN RISK\n" +
                    "Online exploits may cause progress loss, transaction rollback, suspension, or account sanctions. " +
                    "The perceived risk may be low, but no method is completely risk-free.",
-            Bounds = new Rectangle(28, 568, 664, 78),
+            Bounds = new Rectangle(0, 546, 664, 78),
             BackColor = Palette.AlertRed,
             ForeColor = Palette.Ink,
             Font = Typography.StatusDetail,

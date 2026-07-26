@@ -15,6 +15,7 @@ internal static class AppSettingsStorage
         var currentPath = GetPath(CurrentDirectoryName, fileName);
         if (File.Exists(currentPath))
         {
+            EnsureNotReparsePoint(currentPath);
             return File.ReadAllText(currentPath, Encoding.UTF8);
         }
 
@@ -29,6 +30,7 @@ internal static class AppSettingsStorage
             return null;
         }
 
+        EnsureNotReparsePoint(legacyPath);
         fromLegacy = true;
         return File.ReadAllText(legacyPath, Encoding.UTF8);
     }
@@ -45,6 +47,7 @@ internal static class AppSettingsStorage
         }
 
         var destination = Path.Combine(directory, ValidateFileName(fileName));
+        EnsureNotReparsePoint(destination);
         var temporary = Path.Combine(directory, $".{fileName}.{Guid.NewGuid():N}.tmp");
         try
         {
@@ -64,6 +67,22 @@ internal static class AppSettingsStorage
             {
                 File.Delete(temporary);
             }
+        }
+    }
+
+    /// <summary>
+    /// Rejects a settings file that is a symbolic link, junction, or other reparse point.
+    /// VaultLoop runs elevated but its settings live under %LOCALAPPDATA%, which the
+    /// unprivileged user controls; following a redirection from there would let that user
+    /// steer an administrator-level read or write somewhere else. The directory is already
+    /// checked in <see cref="WriteText"/> — this covers the files themselves, on both paths.
+    /// </summary>
+    private static void EnsureNotReparsePoint(string path)
+    {
+        if (File.Exists(path) &&
+            (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new IOException($"The VaultLoop settings file cannot be a reparse point: {path}");
         }
     }
 

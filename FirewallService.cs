@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -14,7 +15,13 @@ internal enum FirewallRuleState
 
 internal sealed class FirewallService
 {
-    internal const string RemoteAddress = "192.81.241.171";
+    /// <summary>
+    /// The single endpoint blocked by VaultLoop 1.2 and by the legacy script. Rules written
+    /// before the address set was widened still carry it, and must keep being recognized so
+    /// that upgrading while no-save is active cannot orphan a rule.
+    /// </summary>
+    private const string LegacyRemoteAddress = RockstarNetworks.ObservedSaveEndpoint;
+
     private const string RuleName = "VaultLoop - No Save";
     private const string PreviousRuleName = "Replay Glitch GTA V - No Save";
     private const string LegacyRuleName = "123456";
@@ -28,6 +35,9 @@ internal sealed class FirewallService
     private const int ProfilesAll = int.MaxValue;
     private const int ModifyStateOk = 0;
     private const int FileNotFoundHResult = unchecked((int)0x80070002);
+    private const int ConfirmationAttempts = 7;
+    private const int InitialConfirmationDelayMilliseconds = 40;
+    private const int MaximumConfirmationDelayMilliseconds = 640;
     private static readonly int[] KnownProfiles = [1, 2, 4];
 
     internal FirewallRuleState GetState()
@@ -128,7 +138,7 @@ internal sealed class FirewallService
                 rule.Action = RuleActionBlock;
                 rule.Protocol = ProtocolAny;
                 rule.LocalAddresses = "*";
-                rule.RemoteAddresses = RemoteAddress;
+                rule.RemoteAddresses = BuildRemoteAddresses();
                 rule.ApplicationName = Path.GetFullPath(gameExecutablePath!);
                 rule.Profiles = ProfilesAll;
                 rule.InterfaceTypes = "All";
@@ -145,17 +155,29 @@ internal sealed class FirewallService
         }
     }
 
+    /// <summary>
+    /// Polls until the firewall reports the requested state, backing off between attempts.
+    /// A single <see cref="GetState"/> costs roughly 15 ms, so the previous fixed 5 × 60 ms
+    /// budget left barely 400 ms in total: under load — a full-screen game keeping the
+    /// firewall service busy — that expired before Windows had published the change and
+    /// rolled back a rule that had in fact been created.
+    /// </summary>
     private void ConfirmState(FirewallRuleState expected)
     {
-        FirewallRuleState actual = FirewallRuleState.Invalid;
-        for (var attempt = 0; attempt < 5; attempt++)
+        var actual = FirewallRuleState.Invalid;
+        var delay = InitialConfirmationDelayMilliseconds;
+        for (var attempt = 0; attempt < ConfirmationAttempts; attempt++)
         {
             actual = GetState();
             if (actual == expected)
             {
                 return;
             }
-            Thread.Sleep(60);
+            if (attempt < ConfirmationAttempts - 1)
+            {
+                Thread.Sleep(delay);
+                delay = Math.Min(delay * 2, MaximumConfirmationDelayMilliseconds);
+            }
         }
         throw new InvalidOperationException(
             $"Windows Firewall did not reach the requested state. Current state: {actual}.");
@@ -203,7 +225,7 @@ internal sealed class FirewallService
                !(bool)rule.EdgeTraversal &&
                string.Equals(Convert.ToString(rule.Description), RuleMarker,
                    StringComparison.Ordinal) &&
-               TargetsOnlyRemoteAddress(Convert.ToString(rule.RemoteAddresses) ?? "") &&
+               TargetsOnlyManagedAddresses(Convert.ToString(rule.RemoteAddresses) ?? "") &&
                GameProcessService.IsTrustedGameExecutable(applicationName);
     }
 
@@ -269,7 +291,7 @@ internal sealed class FirewallService
         !(bool)rule.EdgeTraversal &&
         string.IsNullOrWhiteSpace(Convert.ToString(rule.ApplicationName)) &&
         string.IsNullOrWhiteSpace(Convert.ToString(rule.ServiceName)) &&
-        TargetsOnlyRemoteAddress(Convert.ToString(rule.RemoteAddresses) ?? "");
+        TargetsOnlyLegacyAddress(Convert.ToString(rule.RemoteAddresses) ?? "");
 
     private static bool PolicyCanEnforce(dynamic policy)
     {
@@ -294,7 +316,56 @@ internal sealed class FirewallService
         return true;
     }
 
-    private static bool TargetsOnlyRemoteAddress(string rawAddresses)
+    private static string BuildRemoteAddresses()
+    {
+        var addresses = new List<string>();
+        foreach (var prefix in RockstarNetworks.BlockedSet)
+        {
+            addresses.Add(prefix.Canonical);
+        }
+        return string.Join(",", addresses);
+    }
+
+    /// <summary>
+    /// True when <paramref name="rawAddresses"/> describes exactly the managed block set —
+    /// no extra entry, no missing entry, no broader prefix. Comparison runs on the canonical
+    /// form because Windows Firewall rewrites what it is given (a /24 comes back as a dotted
+    /// subnet mask, a bare address comes back with a full-length mask).
+    /// </summary>
+    internal static bool TargetsOnlyManagedAddresses(string rawAddresses)
+    {
+        var entries = rawAddresses.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries);
+        var expected = RockstarNetworks.BlockedSet;
+        if (entries.Length != expected.Count)
+        {
+            return false;
+        }
+
+        var observed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+        {
+            var prefix = IpPrefix.TryParse(entry);
+            if (prefix is null || !observed.Add(prefix.Canonical))
+            {
+                return false;
+            }
+        }
+
+        foreach (var prefix in expected)
+        {
+            if (!observed.Remove(prefix.Canonical))
+            {
+                return false;
+            }
+        }
+        return observed.Count == 0;
+    }
+
+    /// <summary>
+    /// True when the rule still targets only the single endpoint used before the address set
+    /// was widened. Used to identify removable rules left by earlier versions.
+    /// </summary>
+    internal static bool TargetsOnlyLegacyAddress(string rawAddresses)
     {
         var addresses = rawAddresses.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries);
         if (addresses.Length != 1)
@@ -303,9 +374,9 @@ internal sealed class FirewallService
         }
 
         var address = addresses[0].Trim();
-        return address.Equals(RemoteAddress, StringComparison.OrdinalIgnoreCase) ||
-               address.Equals($"{RemoteAddress}/32", StringComparison.OrdinalIgnoreCase) ||
-               address.Equals($"{RemoteAddress}/255.255.255.255",
+        return address.Equals(LegacyRemoteAddress, StringComparison.OrdinalIgnoreCase) ||
+               address.Equals($"{LegacyRemoteAddress}/32", StringComparison.OrdinalIgnoreCase) ||
+               address.Equals($"{LegacyRemoteAddress}/255.255.255.255",
                    StringComparison.OrdinalIgnoreCase);
     }
 

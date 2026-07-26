@@ -20,6 +20,9 @@ internal static class Program
     [STAThread]
     private static void Main(string[] arguments)
     {
+        // First statement in the process: every later P/Invoke must resolve from System32.
+        NativeMethods.RestrictDllSearchPathToSystem32();
+
         if (arguments.Length == 2 &&
             arguments[0].Equals("--watchdog", StringComparison.OrdinalIgnoreCase))
         {
@@ -35,6 +38,13 @@ internal static class Program
             return;
         }
 
+        if (arguments.Length == 1 &&
+            arguments[0].Equals("--diagnose", StringComparison.OrdinalIgnoreCase))
+        {
+            Environment.ExitCode = DiagnosticsReport.Run();
+            return;
+        }
+
         if (!HasSupportedRuntime())
         {
             MessageBox.Show(
@@ -44,6 +54,13 @@ internal static class Program
         }
 
 #if DEBUG
+        if (arguments.Length >= 1 &&
+            arguments[0].Equals("--selftest", StringComparison.OrdinalIgnoreCase))
+        {
+            Environment.ExitCode = SelfTest.Run();
+            return;
+        }
+
         if (arguments.Length >= 2 &&
             arguments[0].Equals("--render-preview", StringComparison.OrdinalIgnoreCase))
         {
@@ -196,7 +213,7 @@ internal static class Program
 #endif
     }
 
-    private static bool HasSupportedRuntime()
+    internal static bool HasSupportedRuntime()
     {
         const int NetFramework48Release = 528040;
         try
