@@ -97,6 +97,11 @@ while the game is running to see which endpoints are actually in use.
 
 The default shortcut is `Ctrl+Shift+F8`. It can be changed in the application.
 
+VaultLoop starts without administrator rights. The first action that must change
+Windows Firewall triggers one UAC prompt and relaunches VaultLoop elevated for the
+rest of that session. Startup requests elevation only when a stale managed rule
+must be restored.
+
 ## Build
 
 The build is driven entirely by `dotnet`; no build script is involved.
@@ -112,7 +117,7 @@ the locally installed framework (so the build works offline), and two build gate
 run automatically:
 
 - `ValidateManifest` — fails unless `app.manifest` still declares
-  `requireAdministrator`, `PerMonitorV2`, `longPathAware`, and the Windows 10/11
+  `asInvoker`, `PerMonitorV2`, `longPathAware`, and the Windows 10/11
   compatibility GUID.
 - `ValidateSingleFileOutput` — fails if a release build emits anything besides
   `VaultLoop.exe`.
@@ -140,7 +145,7 @@ certificate is not a substitute for a trusted distribution certificate.
 ## Validation
 
 The regression checks live in the application itself and are compiled into `DEBUG`
-builds only. The manifest requires elevation, so run them from an elevated terminal:
+builds only. They are read-only and run without elevation:
 
 ```sh
 dotnet build ReplayGlitchGTA.csproj -c Debug -o obj/preview
@@ -168,7 +173,7 @@ git worktree remove /tmp/baseline --force
 
 ### Connection diagnostics
 
-Available in every build, elevated, read-only:
+Available in every build, without elevation, and read-only:
 
 ```sh
 VaultLoop.exe --diagnose

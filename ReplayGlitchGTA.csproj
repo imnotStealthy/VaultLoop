@@ -44,8 +44,8 @@
   </Target>
 
   <!--
-    Guards the elevation, DPI, and OS-compatibility declarations the app depends on.
-    Set SkipManifestValidation=true only for a throwaway non-elevated test build.
+    Guards the on-demand elevation, DPI, and OS-compatibility declarations the app depends on.
+    Set SkipManifestValidation=true only for a throwaway manifest-free test build.
   -->
   <Target Name="ValidateManifest" BeforeTargets="BeforeBuild"
           Condition="'$(SkipManifestValidation)' != 'true'">
@@ -53,8 +53,8 @@
       <ManifestPath>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(ApplicationManifest)'))</ManifestPath>
       <ManifestText>$([System.IO.File]::ReadAllText('$(ManifestPath)'))</ManifestText>
     </PropertyGroup>
-    <Error Condition="!$(ManifestText.Contains('requireAdministrator'))"
-           Text="app.manifest must request firewall elevation (requireAdministrator)." />
+    <Error Condition="!$(ManifestText.Contains('asInvoker'))"
+           Text="app.manifest must start without automatic elevation (asInvoker)." />
     <Error Condition="!$(ManifestText.Contains('PerMonitorV2'))"
            Text="app.manifest must declare PerMonitorV2 DPI awareness." />
     <Error Condition="!$(ManifestText.Contains('longPathAware'))"
