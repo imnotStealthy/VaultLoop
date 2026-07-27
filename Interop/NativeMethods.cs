@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace ReplayGlitchGTA;
 
@@ -15,6 +16,13 @@ internal static class NativeMethods
     internal const uint AltDownFlag = 0x20;
     internal const int NonClientLeftButtonDown = 0x00A1;
     internal const int HitCaption = 0x0002;
+
+    /// <summary>
+    /// Enough access to read a process image path, and no more. Anti-cheat protection on the
+    /// running game denies the broader rights that <c>Process.MainModule</c> needs.
+    /// </summary>
+    internal const int ProcessQueryLimitedInformation = 0x1000;
+
     private const int ParentProcessConsole = -1;
     private const int LoadLibrarySearchSystem32 = 0x00000800;
 
@@ -78,6 +86,24 @@ internal static class NativeMethods
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetDefaultDllDirectories(int directoryFlags);
+
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    internal static extern uint GetWindowThreadProcessId(
+        IntPtr windowHandle, out uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern IntPtr OpenProcess(
+        int desiredAccess, bool inheritHandle, int processId);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    internal static extern bool QueryFullProcessImageName(
+        IntPtr process, int flags, StringBuilder executableName, ref int size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern bool CloseHandle(IntPtr handle);
 
     [DllImport("user32.dll")]
     internal static extern bool ReleaseCapture();

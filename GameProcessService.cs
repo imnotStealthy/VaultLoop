@@ -2,10 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using Microsoft.Win32.SafeHandles;
 
 namespace ReplayGlitchGTA;
 
@@ -13,26 +10,10 @@ internal static class GameProcessService
 {
     private const string LegacyProcessName = "GTA5";
     private const string EnhancedProcessName = "GTA5_Enhanced";
-    private const int MaximumCacheEntries = 16;
-    private const int TrustedCacheLifetimeSeconds = 30;
-    private const int RejectedCacheLifetimeSeconds = 15;
-    private const uint WinTrustUiNone = 2;
-    private const uint WinTrustRevokeWholeChain = 1;
-    private const uint WinTrustChoiceFile = 1;
-    private const uint WinTrustStateActionIgnore = 0;
-    private const uint WinTrustRevocationCheckChainExcludeRoot = 0x80;
-    private const uint WinTrustDisableMd2Md4 = 0x2000;
-    private const int FileBasicInfoClass = 0;
-    private const int ProcessQueryLimitedInformation = 0x1000;
     private const int MaximumExtendedPath = 32768;
 
     private static readonly string[] SupportedProcessNames =
         [EnhancedProcessName, LegacyProcessName];
-    private static readonly Guid GenericVerifyV2Action =
-        new("00AAC56B-CD44-11D0-8CC2-00C04FC295EE");
-    private static readonly object CacheLock = new();
-    private static readonly Dictionary<string, TrustCacheEntry> TrustCache =
-        new(StringComparer.OrdinalIgnoreCase);
 
     internal static bool TryGetVerifiedForegroundGame(out string executablePath)
     {
@@ -44,9 +25,9 @@ internal static class GameProcessService
     {
         executablePath = string.Empty;
         windowHandle = IntPtr.Zero;
-        var foregroundWindow = GetForegroundWindow();
+        var foregroundWindow = NativeMethods.GetForegroundWindow();
         if (foregroundWindow == IntPtr.Zero ||
-            GetWindowThreadProcessId(foregroundWindow, out var processId) == 0 ||
+            NativeMethods.GetWindowThreadProcessId(foregroundWindow, out var processId) == 0 ||
             processId == 0)
         {
             return false;
@@ -57,12 +38,12 @@ internal static class GameProcessService
             using var process = Process.GetProcessById(checked((int)processId));
             if (!TryGetVerifiedProcessPath(process, out var candidatePath) ||
                 process.HasExited ||
-                GetForegroundWindow() != foregroundWindow)
+                NativeMethods.GetForegroundWindow() != foregroundWindow)
             {
                 return false;
             }
 
-            GetWindowThreadProcessId(foregroundWindow, out var currentProcessId);
+            NativeMethods.GetWindowThreadProcessId(foregroundWindow, out var currentProcessId);
             if (currentProcessId != processId)
             {
                 return false;
@@ -85,6 +66,28 @@ internal static class GameProcessService
             return true;
         }
 
+        var verifiedPath = string.Empty;
+        var found = TryScanSupportedProcesses(process =>
+        {
+            if (!TryGetVerifiedProcessPath(process, out var candidatePath))
+            {
+                return false;
+            }
+            verifiedPath = candidatePath;
+            return true;
+        });
+
+        executablePath = found ? verifiedPath : string.Empty;
+        return found;
+    }
+
+    /// <summary>
+    /// Walks the running processes carrying a supported game name and stops at the first one
+    /// <paramref name="accept"/> takes. Every enumerated process is disposed, and a process
+    /// list that cannot be read is skipped rather than aborting the scan.
+    /// </summary>
+    private static bool TryScanSupportedProcesses(Func<Process, bool> accept)
+    {
         foreach (var processName in SupportedProcessNames)
         {
             Process[] processes;
@@ -101,9 +104,8 @@ internal static class GameProcessService
             {
                 foreach (var process in processes)
                 {
-                    if (TryGetVerifiedProcessPath(process, out var candidatePath))
+                    if (accept(process))
                     {
-                        executablePath = candidatePath;
                         return true;
                     }
                 }
@@ -116,8 +118,6 @@ internal static class GameProcessService
                 }
             }
         }
-
-        executablePath = string.Empty;
         return false;
     }
 
@@ -129,49 +129,29 @@ internal static class GameProcessService
     /// </summary>
     internal static bool TryGetVerifiedGameProcess(out int processId, out string executablePath)
     {
-        processId = 0;
-        executablePath = string.Empty;
-        foreach (var processName in SupportedProcessNames)
+        var verifiedId = 0;
+        var verifiedPath = string.Empty;
+        var found = TryScanSupportedProcesses(process =>
         {
-            Process[] processes;
+            if (!TryGetVerifiedProcessPath(process, out var candidatePath))
+            {
+                return false;
+            }
             try
             {
-                processes = Process.GetProcessesByName(processName);
+                verifiedId = process.Id;
             }
             catch
             {
-                continue;
+                return false;
             }
+            verifiedPath = candidatePath;
+            return true;
+        });
 
-            try
-            {
-                foreach (var process in processes)
-                {
-                    if (!TryGetVerifiedProcessPath(process, out var candidatePath))
-                    {
-                        continue;
-                    }
-                    try
-                    {
-                        processId = process.Id;
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-                    executablePath = candidatePath;
-                    return true;
-                }
-            }
-            finally
-            {
-                foreach (var process in processes)
-                {
-                    process.Dispose();
-                }
-            }
-        }
-        return false;
+        processId = found ? verifiedId : 0;
+        executablePath = found ? verifiedPath : string.Empty;
+        return found;
     }
 
     internal static bool IsTrustedGameExecutable(string executablePath)
@@ -192,19 +172,21 @@ internal static class GameProcessService
 
             using var file = new FileStream(fullPath, FileMode.Open, FileAccess.Read,
                 FileShare.Read, 4096, FileOptions.SequentialScan);
-            var hasFingerprint = TryGetFingerprint(file.SafeFileHandle, out var fingerprint);
+            var hasFingerprint = TrustCache.TryGetFingerprint(
+                file.SafeFileHandle, out var fingerprint);
             var now = Stopwatch.GetTimestamp();
             if (hasFingerprint &&
-                TryGetCachedTrust(fullPath, fingerprint, now, out var cachedTrust))
+                TrustCache.TryGet(fullPath, fingerprint, now, out var cachedTrust))
             {
                 return cachedTrust;
             }
 
-            var trusted = VerifyAuthenticode(fullPath, file.SafeFileHandle) &&
-                          IsRockstarPublisher(fullPath);
+            var trusted =
+                AuthenticodeVerifier.IsSignatureValid(fullPath, file.SafeFileHandle) &&
+                AuthenticodeVerifier.IsRockstarPublisher(fullPath);
             if (hasFingerprint)
             {
-                CacheTrust(fullPath, fingerprint, trusted, now);
+                TrustCache.Store(fullPath, fingerprint, trusted, now);
             }
             return trusted;
         }
@@ -219,7 +201,7 @@ internal static class GameProcessService
         string.Equals(processName, EnhancedProcessName, StringComparison.OrdinalIgnoreCase);
 
     internal static bool IsCurrentForegroundWindow(IntPtr expectedWindow) =>
-        expectedWindow != IntPtr.Zero && GetForegroundWindow() == expectedWindow;
+        expectedWindow != IntPtr.Zero && NativeMethods.GetForegroundWindow() == expectedWindow;
 
     private static bool TryGetVerifiedProcessPath(Process process, out string executablePath)
     {
@@ -288,7 +270,7 @@ internal static class GameProcessService
             return null;
         }
 
-        var handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+        var handle = NativeMethods.OpenProcess(NativeMethods.ProcessQueryLimitedInformation, false, processId);
         if (handle == IntPtr.Zero)
         {
             return null;
@@ -297,13 +279,13 @@ internal static class GameProcessService
         {
             var buffer = new StringBuilder(MaximumExtendedPath);
             var size = buffer.Capacity;
-            return QueryFullProcessImageName(handle, 0, buffer, ref size)
+            return NativeMethods.QueryFullProcessImageName(handle, 0, buffer, ref size)
                 ? buffer.ToString()
                 : null;
         }
         finally
         {
-            CloseHandle(handle);
+            NativeMethods.CloseHandle(handle);
         }
     }
 
@@ -397,7 +379,7 @@ internal static class GameProcessService
 
             using var file = new FileStream(fullPath, FileMode.Open, FileAccess.Read,
                 FileShare.Read, 4096, FileOptions.SequentialScan);
-            if (!VerifyAuthenticode(fullPath, file.SafeFileHandle))
+            if (!AuthenticodeVerifier.IsSignatureValid(fullPath, file.SafeFileHandle))
             {
                 return "rejected: Authenticode signature did not verify";
             }
@@ -405,9 +387,7 @@ internal static class GameProcessService
             string publisher;
             try
             {
-                using var signer = X509Certificate.CreateFromSignedFile(fullPath);
-                using var certificate = new X509Certificate2(signer);
-                publisher = certificate.GetNameInfo(X509NameType.SimpleName, false).Trim();
+                publisher = AuthenticodeVerifier.ReadPublisherName(fullPath);
             }
             catch (Exception exception)
             {
@@ -424,236 +404,4 @@ internal static class GameProcessService
         }
     }
 
-    private static bool VerifyAuthenticode(string executablePath, SafeFileHandle fileHandle)
-    {
-        var fileInfo = new WinTrustFileInfo
-        {
-            StructSize = (uint)Marshal.SizeOf(typeof(WinTrustFileInfo)),
-            FilePath = executablePath,
-            FileHandle = fileHandle.DangerousGetHandle(),
-            KnownSubject = IntPtr.Zero
-        };
-        var fileInfoPointer = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(WinTrustFileInfo)));
-        try
-        {
-            Marshal.StructureToPtr(fileInfo, fileInfoPointer, false);
-            var trustData = new WinTrustData
-            {
-                StructSize = (uint)Marshal.SizeOf(typeof(WinTrustData)),
-                UiChoice = WinTrustUiNone,
-                RevocationChecks = WinTrustRevokeWholeChain,
-                UnionChoice = WinTrustChoiceFile,
-                FileInfo = fileInfoPointer,
-                StateAction = WinTrustStateActionIgnore,
-                ProviderFlags = WinTrustRevocationCheckChainExcludeRoot |
-                                WinTrustDisableMd2Md4
-            };
-            var action = GenericVerifyV2Action;
-            return WinVerifyTrust(IntPtr.Zero, ref action, ref trustData) == 0;
-        }
-        finally
-        {
-            Marshal.DestroyStructure(fileInfoPointer, typeof(WinTrustFileInfo));
-            Marshal.FreeHGlobal(fileInfoPointer);
-        }
-    }
-
-    private static bool IsRockstarPublisher(string executablePath)
-    {
-        using var signer = X509Certificate.CreateFromSignedFile(executablePath);
-        using var certificate = new X509Certificate2(signer);
-        var publisher = certificate.GetNameInfo(X509NameType.SimpleName, false).Trim();
-        return publisher.Equals("Rockstar Games, Inc.", StringComparison.OrdinalIgnoreCase) ||
-               publisher.Equals("Rockstar Games, Inc", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool TryGetFingerprint(
-        SafeFileHandle fileHandle, out FileFingerprint fingerprint)
-    {
-        fingerprint = default;
-        if (!GetFileInformationByHandle(fileHandle, out var standardInfo) ||
-            !GetFileInformationByHandleEx(fileHandle, FileBasicInfoClass,
-                out var basicInfo, (uint)Marshal.SizeOf(typeof(FileBasicInfo))))
-        {
-            return false;
-        }
-
-        fingerprint = new FileFingerprint(
-            standardInfo.VolumeSerialNumber,
-            ((ulong)standardInfo.FileIndexHigh << 32) | standardInfo.FileIndexLow,
-            ((ulong)standardInfo.FileSizeHigh << 32) | standardInfo.FileSizeLow,
-            basicInfo.LastWriteTime,
-            basicInfo.ChangeTime);
-        return true;
-    }
-
-    private static bool TryGetCachedTrust(
-        string path, FileFingerprint fingerprint, long now, out bool trusted)
-    {
-        lock (CacheLock)
-        {
-            if (TrustCache.TryGetValue(path, out var entry) &&
-                entry.Fingerprint.Equals(fingerprint) &&
-                now < entry.ExpiresAt)
-            {
-                trusted = entry.Trusted;
-                return true;
-            }
-        }
-
-        trusted = false;
-        return false;
-    }
-
-    private static void CacheTrust(
-        string path, FileFingerprint fingerprint, bool trusted, long now)
-    {
-        var lifetime = trusted
-            ? TrustedCacheLifetimeSeconds
-            : RejectedCacheLifetimeSeconds;
-        var expiresAt = now + Stopwatch.Frequency * lifetime;
-        lock (CacheLock)
-        {
-            if (TrustCache.Count >= MaximumCacheEntries && !TrustCache.ContainsKey(path))
-            {
-                TrustCache.Clear();
-            }
-            TrustCache[path] = new TrustCacheEntry(fingerprint, trusted, expiresAt);
-        }
-    }
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr OpenProcess(
-        int desiredAccess, bool inheritHandle, int processId);
-
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool QueryFullProcessImageName(
-        IntPtr process, int flags, StringBuilder executableName, ref int size);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CloseHandle(IntPtr handle);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(
-        IntPtr windowHandle, out uint processId);
-
-    [DllImport("wintrust.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
-    private static extern int WinVerifyTrust(
-        IntPtr windowHandle, ref Guid actionId, ref WinTrustData trustData);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool GetFileInformationByHandle(
-        SafeFileHandle fileHandle, out ByHandleFileInformation fileInformation);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool GetFileInformationByHandleEx(
-        SafeFileHandle fileHandle, int fileInformationClass,
-        out FileBasicInfo fileInformation, uint bufferSize);
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct WinTrustFileInfo
-    {
-        internal uint StructSize;
-
-        [MarshalAs(UnmanagedType.LPWStr)]
-        internal string FilePath;
-
-        internal IntPtr FileHandle;
-        internal IntPtr KnownSubject;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct WinTrustData
-    {
-        internal uint StructSize;
-        internal IntPtr PolicyCallbackData;
-        internal IntPtr SipClientData;
-        internal uint UiChoice;
-        internal uint RevocationChecks;
-        internal uint UnionChoice;
-        internal IntPtr FileInfo;
-        internal uint StateAction;
-        internal IntPtr StateData;
-        internal IntPtr UrlReference;
-        internal uint ProviderFlags;
-        internal uint UiContext;
-        internal IntPtr SignatureSettings;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativeFileTime
-    {
-        internal uint LowDateTime;
-        internal uint HighDateTime;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ByHandleFileInformation
-    {
-        internal uint FileAttributes;
-        internal NativeFileTime CreationTime;
-        internal NativeFileTime LastAccessTime;
-        internal NativeFileTime LastWriteTime;
-        internal uint VolumeSerialNumber;
-        internal uint FileSizeHigh;
-        internal uint FileSizeLow;
-        internal uint NumberOfLinks;
-        internal uint FileIndexHigh;
-        internal uint FileIndexLow;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct FileBasicInfo
-    {
-        internal long CreationTime;
-        internal long LastAccessTime;
-        internal long LastWriteTime;
-        internal long ChangeTime;
-        internal uint FileAttributes;
-    }
-
-    private readonly struct FileFingerprint : IEquatable<FileFingerprint>
-    {
-        private readonly uint _volumeSerialNumber;
-        private readonly ulong _fileIndex;
-        private readonly ulong _fileSize;
-        private readonly long _lastWriteTime;
-        private readonly long _changeTime;
-
-        internal FileFingerprint(
-            uint volumeSerialNumber, ulong fileIndex, ulong fileSize,
-            long lastWriteTime, long changeTime)
-        {
-            _volumeSerialNumber = volumeSerialNumber;
-            _fileIndex = fileIndex;
-            _fileSize = fileSize;
-            _lastWriteTime = lastWriteTime;
-            _changeTime = changeTime;
-        }
-
-        public bool Equals(FileFingerprint other) =>
-            _volumeSerialNumber == other._volumeSerialNumber &&
-            _fileIndex == other._fileIndex &&
-            _fileSize == other._fileSize &&
-            _lastWriteTime == other._lastWriteTime &&
-            _changeTime == other._changeTime;
-    }
-
-    private sealed class TrustCacheEntry
-    {
-        internal FileFingerprint Fingerprint { get; }
-        internal bool Trusted { get; }
-        internal long ExpiresAt { get; }
-
-        internal TrustCacheEntry(
-            FileFingerprint fingerprint, bool trusted, long expiresAt)
-        {
-            Fingerprint = fingerprint;
-            Trusted = trusted;
-            ExpiresAt = expiresAt;
-        }
-    }
 }

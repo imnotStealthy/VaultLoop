@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Reflection;
+using System.Security.Principal;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -9,8 +10,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("VaultLoop")]
 [assembly: AssemblyDescription("GTA V no-save firewall link controller")]
 [assembly: AssemblyProduct("VaultLoop")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.2.1.0")]
+[assembly: AssemblyFileVersion("1.2.1.0")]
 #endif
 
 namespace ReplayGlitchGTA;
@@ -23,23 +24,42 @@ internal static class Program
         // First statement in the process: every later P/Invoke must resolve from System32.
         NativeMethods.RestrictDllSearchPathToSystem32();
 
-        if (arguments.Length == 2 &&
-            arguments[0].Equals("--watchdog", StringComparison.OrdinalIgnoreCase))
+        var elevatedRequest = TryParseElevatedRequest(arguments, out var parentProcessId,
+            out var requestedGamePath, out var requestedForegroundWindow);
+        if (elevatedRequest)
+        {
+            WaitForParentExit(parentProcessId);
+        }
+
+        if (IsCommand(arguments, "--watchdog") && arguments.Length == 2)
         {
             RunWatchdog(arguments[1]);
             return;
         }
 
         InitializeApplication();
-        if (arguments.Length == 1 &&
-            arguments[0].Equals("--restore", StringComparison.OrdinalIgnoreCase))
+        if (IsCommand(arguments, "--restore") && arguments.Length == 1)
         {
-            RunEmergencyRestore();
+            if (IsRunningAsAdministrator())
+            {
+                RunEmergencyRestore();
+            }
+            else
+            {
+                try
+                {
+                    StartElevated("--restore");
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show($"The firewall rule could not be restored:\n{exception.Message}",
+                        "VaultLoop restore failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
             return;
         }
 
-        if (arguments.Length == 1 &&
-            arguments[0].Equals("--diagnose", StringComparison.OrdinalIgnoreCase))
+        if (IsCommand(arguments, "--diagnose") && arguments.Length == 1)
         {
             Environment.ExitCode = DiagnosticsReport.Run();
             return;
@@ -54,15 +74,13 @@ internal static class Program
         }
 
 #if DEBUG
-        if (arguments.Length >= 1 &&
-            arguments[0].Equals("--selftest", StringComparison.OrdinalIgnoreCase))
+        if (IsCommand(arguments, "--selftest"))
         {
             Environment.ExitCode = SelfTest.Run();
             return;
         }
 
-        if (arguments.Length >= 2 &&
-            arguments[0].Equals("--render-preview", StringComparison.OrdinalIgnoreCase))
+        if (IsCommand(arguments, "--render-preview") && arguments.Length >= 2)
         {
             var enabled = arguments.Length >= 3 &&
                           arguments[2].Equals("on", StringComparison.OrdinalIgnoreCase);
@@ -86,27 +104,21 @@ internal static class Program
         }
 
         var firewall = new FirewallService();
-        var recoveredStaleRule = false;
-        try
+        var startupOutcome = PrepareFirewall(
+            firewall, requestedGamePath, requestedForegroundWindow);
+        if (startupOutcome == StartupOutcome.HandedOverToElevatedProcess)
         {
-            var startupState = firewall.GetState();
-            if (startupState != FirewallRuleState.Inactive)
-            {
-                firewall.SetNoSaveEnabled(false);
-                recoveredStaleRule = true;
-            }
-        }
-        catch (Exception exception)
-        {
-            MessageBox.Show(
-                $"VaultLoop could not validate or restore its firewall rule:\n{exception.Message}",
-                "Startup recovery failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            singleInstance.ReleaseMutex();
+            return;
         }
 
-        StartWatchdog();
+        if (IsRunningAsAdministrator())
+        {
+            StartWatchdog();
+        }
         try
         {
-            if (recoveredStaleRule)
+            if (startupOutcome == StartupOutcome.RecoveredStaleRule)
             {
                 MessageBox.Show(
                     "VaultLoop restored a firewall rule left by a previous interrupted session.",
@@ -116,15 +128,169 @@ internal static class Program
         }
         finally
         {
-            try
+            if (IsRunningAsAdministrator())
             {
-                firewall.SetNoSaveEnabled(false);
-            }
-            catch
-            {
-                // The form already reports cleanup failures; this is a final best-effort retry.
+                try
+                {
+                    firewall.SetNoSaveEnabled(false);
+                }
+                catch
+                {
+                    // The form already reports cleanup failures; this is a final best-effort retry.
+                }
             }
             singleInstance.ReleaseMutex();
+        }
+    }
+
+    private static bool IsCommand(string[] arguments, string name) =>
+        arguments.Length >= 1 &&
+        arguments[0].Equals(name, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Brings the firewall to a known state before the window opens: a rule surviving a
+    /// previous session is removed, and an activation requested by an elevation relaunch is
+    /// applied. A rule left behind while the process is unelevated can only be dealt with by
+    /// the elevated instance, which this one then hands over to.
+    /// </summary>
+    private static StartupOutcome PrepareFirewall(
+        FirewallService firewall, string? requestedGamePath, IntPtr requestedForegroundWindow)
+    {
+        var outcome = StartupOutcome.Ready;
+        try
+        {
+            if (firewall.GetState() != FirewallRuleState.Inactive)
+            {
+                if (!IsRunningAsAdministrator())
+                {
+                    try
+                    {
+                        RelaunchElevated(null, IntPtr.Zero);
+                    }
+                    catch (Exception exception)
+                    {
+                        ReportStartupFailure(exception);
+                    }
+                    return StartupOutcome.HandedOverToElevatedProcess;
+                }
+                firewall.SetNoSaveEnabled(false);
+                outcome = StartupOutcome.RecoveredStaleRule;
+            }
+
+            if (requestedGamePath is not null)
+            {
+                if (requestedForegroundWindow != IntPtr.Zero &&
+                    !GameProcessService.IsCurrentForegroundWindow(requestedForegroundWindow))
+                {
+                    throw new InvalidOperationException(
+                        "GTA V must remain in the foreground to use the shortcut.");
+                }
+                firewall.SetNoSaveEnabled(true, requestedGamePath);
+            }
+        }
+        catch (Exception exception)
+        {
+            ReportStartupFailure(exception);
+        }
+        return outcome;
+    }
+
+    private static void ReportStartupFailure(Exception exception) =>
+        MessageBox.Show(
+            $"VaultLoop could not validate or restore its firewall rule:\n{exception.Message}",
+            "Startup recovery failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+    private enum StartupOutcome
+    {
+        Ready,
+        RecoveredStaleRule,
+        HandedOverToElevatedProcess
+    }
+
+    internal static void RelaunchElevated(string? gamePath, IntPtr foregroundWindow)
+    {
+        StartElevated(BuildElevatedArguments(
+            Process.GetCurrentProcess().Id, gamePath, foregroundWindow));
+    }
+
+    internal static string BuildElevatedArguments(
+        int parentProcessId, string? gamePath, IntPtr foregroundWindow)
+    {
+        var arguments = $"--elevated {parentProcessId}";
+        if (gamePath is not null)
+        {
+            arguments += $" --enable \"{gamePath}\"";
+            if (foregroundWindow != IntPtr.Zero)
+            {
+                arguments += $" --foreground-window {foregroundWindow.ToInt64()}";
+            }
+        }
+        return arguments;
+    }
+
+    internal static bool IsRunningAsAdministrator()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    private static void StartElevated(string arguments)
+    {
+        using var elevatedProcess = Process.Start(new ProcessStartInfo
+        {
+            FileName = Application.ExecutablePath,
+            Arguments = arguments,
+            Verb = "runas",
+            UseShellExecute = true
+        }) ?? throw new InvalidOperationException("The elevated VaultLoop process could not start.");
+    }
+
+    internal static bool TryParseElevatedRequest(
+        string[] arguments, out int parentProcessId, out string? gamePath,
+        out IntPtr foregroundWindow)
+    {
+        parentProcessId = 0;
+        gamePath = null;
+        foregroundWindow = IntPtr.Zero;
+        if (arguments.Length is not (2 or 4 or 6) ||
+            !arguments[0].Equals("--elevated", StringComparison.OrdinalIgnoreCase) ||
+            !int.TryParse(arguments[1], out parentProcessId))
+        {
+            return false;
+        }
+
+        if (arguments.Length >= 4)
+        {
+            if (!arguments[2].Equals("--enable", StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(arguments[3]))
+            {
+                return false;
+            }
+            gamePath = arguments[3];
+        }
+        if (arguments.Length >= 6)
+        {
+            if (!arguments[4].Equals(
+                    "--foreground-window", StringComparison.OrdinalIgnoreCase) ||
+                !long.TryParse(arguments[5], out var windowHandle))
+            {
+                return false;
+            }
+            foregroundWindow = new IntPtr(windowHandle);
+        }
+        return true;
+    }
+
+    private static void WaitForParentExit(int parentProcessId)
+    {
+        try
+        {
+            using var parent = Process.GetProcessById(parentProcessId);
+            parent.WaitForExit();
+        }
+        catch
+        {
+            // The parent may already be gone; the elevated process can continue.
         }
     }
 

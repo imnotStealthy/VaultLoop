@@ -36,11 +36,10 @@ internal sealed class ShortcutDialog : BrutalistDialog
             ForeColor = textColor
         });
 
-        _capturedButton = BrutalistControls.CreateButton(
+        _capturedButton = BrutalistControls.CreateOutlinedButton(
             ShortcutSettings.Format(modifiers, key), new Rectangle(30, 144, 370, 52),
             Typography.StatusDetail, darkMode ? Palette.DarkSurface : Palette.Paper,
-            darkMode ? Palette.Paper : Palette.Ink, 3, Palette.Ink, null, null,
-            ContentAlignment.MiddleCenter, null);
+            darkMode ? Palette.Paper : Palette.Ink);
         _capturedButton.Name = "ShortcutCapture";
         _capturedButton.AccessibleName = "Keyboard shortcut capture field";
         _capturedButton.AccessibleDescription =
@@ -51,18 +50,15 @@ internal sealed class ShortcutDialog : BrutalistDialog
 
         var secondaryColor = darkMode ? Palette.DarkSurface : Palette.Paper;
         var secondaryText = darkMode ? Palette.Paper : Palette.Ink;
-        var resetButton = BrutalistControls.CreateButton(
+        var resetButton = BrutalistControls.CreateOutlinedButton(
             "RESET", new Rectangle(30, 218, 86, 36), Typography.StatusDetail,
-            secondaryColor, secondaryText, 3, Palette.Ink, null, null,
-            ContentAlignment.MiddleCenter, null);
-        var saveButton = BrutalistControls.CreateButton(
+            secondaryColor, secondaryText);
+        var saveButton = BrutalistControls.CreateOutlinedButton(
             "SAVE", new Rectangle(220, 218, 84, 36), Typography.StatusDetail,
-            Palette.Acid, Palette.Ink, 3, Palette.Ink, null, null,
-            ContentAlignment.MiddleCenter, null);
-        var cancelButton = BrutalistControls.CreateButton(
+            Palette.Acid, Palette.Ink);
+        var cancelButton = BrutalistControls.CreateOutlinedButton(
             "CANCEL", new Rectangle(314, 218, 86, 36), Typography.StatusDetail,
-            secondaryColor, secondaryText, 3, Palette.Ink, null, null,
-            ContentAlignment.MiddleCenter, null);
+            secondaryColor, secondaryText);
         resetButton.Click += (_, _) =>
         {
             (ShortcutModifiers, ShortcutKey) = ShortcutSettings.Default;

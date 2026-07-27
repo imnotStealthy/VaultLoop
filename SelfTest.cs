@@ -13,7 +13,7 @@ namespace ReplayGlitchGTA;
 /// Dependency-free regression checks, reachable through <c>VaultLoop.exe --selftest</c>.
 /// This replaces the former Test.ps1 harness: every assertion calls the member directly,
 /// so a rename or a signature change becomes a compile error instead of a silent gap.
-/// The application manifest requires elevation, so run it from an elevated terminal.
+/// The checks run without elevation and never request a firewall mutation.
 /// The checks are read-only: no firewall rule is created, modified, or removed.
 /// </summary>
 internal static class SelfTest
@@ -24,8 +24,8 @@ internal static class SelfTest
 
         var checks = new CheckList();
 
-        checks.Verify("assembly version is 1.2.0.0",
-            () => typeof(Program).Assembly.GetName().Version?.ToString() == "1.2.0.0");
+        checks.Verify("assembly version is 1.2.1.0",
+            () => typeof(Program).Assembly.GetName().Version?.ToString() == "1.2.1.0");
         checks.Verify("assembly targets the canonical .NET Framework runtime",
             () => typeof(Program).Assembly.ImageRuntimeVersion == "v4.0.30319");
         checks.Verify("embedded logo resource is present",
@@ -44,7 +44,7 @@ internal static class SelfTest
 
         // Properties of whatever set is active, so editing endpoints.txt cannot turn the
         // suite red on a legitimate configuration.
-        var activeSet = DescribeActiveSet();
+        var activeSet = RockstarNetworks.FormatBlockedSet();
         checks.Verify("the blocked set is never empty",
             () => RockstarNetworks.BlockedSet.Count > 0);
         checks.Verify("every blocked prefix stays inside a Rockstar Online Services allocation",
@@ -117,6 +117,8 @@ internal static class SelfTest
 
         checks.Verify("the default shortcut is valid",
             () => ShortcutDialog.IsValidShortcut(Keys.Control | Keys.Shift, Keys.F8));
+        checks.Verify("Alt+F8 remains available as a saved user shortcut",
+            () => ShortcutDialog.IsValidShortcut(Keys.Alt, Keys.F8));
         checks.Verify("Alt+F4 stays reserved",
             () => !ShortcutDialog.IsValidShortcut(Keys.Alt, Keys.F4));
         checks.Verify("Alt+Tab stays reserved",
@@ -126,6 +128,24 @@ internal static class SelfTest
 
         checks.Verify(".NET Framework 4.8 runtime check passes",
             Program.HasSupportedRuntime);
+        checks.Verify("elevated activation arguments preserve path and foreground window", () =>
+        {
+            var arguments = Program.BuildElevatedArguments(
+                42, @"C:\Games\Grand Theft Auto V\GTA5.exe", new IntPtr(123));
+            return Program.TryParseElevatedRequest(
+                       ["--elevated", "42", "--enable",
+                        @"C:\Games\Grand Theft Auto V\GTA5.exe",
+                        "--foreground-window", "123"],
+                       out var parentProcessId, out var gamePath, out var foregroundWindow) &&
+                   arguments == "--elevated 42 --enable \"C:\\Games\\Grand Theft Auto V\\GTA5.exe\" " +
+                                "--foreground-window 123" &&
+                   parentProcessId == 42 &&
+                   gamePath == @"C:\Games\Grand Theft Auto V\GTA5.exe" &&
+                   foregroundWindow == new IntPtr(123);
+        });
+        checks.Verify("malformed elevated activation arguments are rejected",
+            () => !Program.TryParseElevatedRequest(
+                ["--elevated", "42", "--enable"], out _, out _, out _));
 
         checks.Verify("the preview window builds with the expected chrome", () =>
         {
@@ -150,16 +170,6 @@ internal static class SelfTest
 
         Console.WriteLine(checks.BuildReport(firewallState));
         return checks.Failures.Count == 0 ? 0 : 1;
-    }
-
-    private static string DescribeActiveSet()
-    {
-        var entries = new List<string>();
-        foreach (var prefix in RockstarNetworks.BlockedSet)
-        {
-            entries.Add(prefix.Canonical);
-        }
-        return string.Join(",", entries);
     }
 
     private static string Reverse(string commaSeparated)

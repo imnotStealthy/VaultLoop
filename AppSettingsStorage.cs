@@ -35,6 +35,48 @@ internal static class AppSettingsStorage
         return File.ReadAllText(legacyPath, Encoding.UTF8);
     }
 
+    /// <summary>
+    /// Reads a preference, parses it with <paramref name="parse"/>, and rewrites a value that
+    /// came from the legacy directory into the current one. A preference is never worth
+    /// failing a start over: an unreadable file, an unparsable value, or a migration that
+    /// cannot be persisted all fall back to <paramref name="fallback"/> or to the value in
+    /// hand.
+    /// </summary>
+    /// <param name="parse">
+    /// Returns <c>false</c> when the stored text does not describe a usable value.
+    /// </param>
+    internal static T ReadPreference<T>(
+        string fileName, bool includeLegacy, TryParse<T> parse, Action<T> save, T fallback)
+    {
+        try
+        {
+            var rawValue = ReadText(fileName, includeLegacy, out var fromLegacy);
+            if (rawValue is null || !parse(rawValue, out var value))
+            {
+                return fallback;
+            }
+
+            if (fromLegacy)
+            {
+                try
+                {
+                    save(value);
+                }
+                catch
+                {
+                    // A usable legacy preference stays usable even if it cannot be migrated.
+                }
+            }
+            return value;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    internal delegate bool TryParse<T>(string rawValue, out T value);
+
     internal static void WriteText(string fileName, string value)
     {
         var directory = Path.Combine(

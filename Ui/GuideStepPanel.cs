@@ -1,4 +1,5 @@
 using System;
+using System.Drawing;
 using System.Windows.Forms;
 
 namespace ReplayGlitchGTA;
@@ -18,6 +19,20 @@ internal sealed class GuideStepPanel : Panel
             }
             _isCurrent = value;
             AccessibilityNotifyClients(AccessibleEvents.StateChange, -1);
+        }
+    }
+
+    /// <summary>
+    /// Repaints the step in one pair of colors. The number badge keeps its own accent, so it
+    /// is the one child left untouched.
+    /// </summary>
+    internal void SetStepColors(Color background, Color foreground)
+    {
+        BackColor = background;
+        for (var index = 1; index < Controls.Count; index++)
+        {
+            Controls[index].BackColor = background;
+            Controls[index].ForeColor = foreground;
         }
     }
 

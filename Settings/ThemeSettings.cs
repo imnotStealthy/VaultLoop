@@ -4,30 +4,15 @@ namespace ReplayGlitchGTA;
 
 internal static class ThemeSettings
 {
-    internal static bool Load()
+    internal static bool Load() =>
+        AppSettingsStorage.ReadPreference<bool>(
+            "theme.txt", includeLegacy: true, TryParse, Save, fallback: false);
+
+    /// <summary>Anything other than "dark" means the light theme, so parsing never fails.</summary>
+    private static bool TryParse(string rawValue, out bool darkMode)
     {
-        try
-        {
-            var rawValue = AppSettingsStorage.ReadText(
-                "theme.txt", includeLegacy: true, out var fromLegacy);
-            var darkMode = rawValue?.Trim()
-                .Equals("dark", StringComparison.OrdinalIgnoreCase) == true;
-            if (fromLegacy)
-            {
-                try
-                {
-                    Save(darkMode);
-                }
-                catch
-                {
-                }
-            }
-            return darkMode;
-        }
-        catch
-        {
-            return false;
-        }
+        darkMode = rawValue.Trim().Equals("dark", StringComparison.OrdinalIgnoreCase);
+        return true;
     }
 
     internal static void Save(bool darkMode)

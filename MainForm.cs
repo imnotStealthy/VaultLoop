@@ -4,14 +4,12 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
-using System.Reflection;
-using System.Security.Principal;
 using System.Threading;
 using System.Windows.Forms;
 
 namespace ReplayGlitchGTA;
 
-internal sealed class MainForm : Form
+internal sealed partial class MainForm : Form
 {
     private const int RefreshIntervalMilliseconds = 1200;
 
@@ -66,94 +64,15 @@ internal sealed class MainForm : Form
         _hotkeyHook.Pressed += HandleHotkeyPressed;
         _darkMode = ThemeSettings.Load();
 
-        Text = "VaultLoop";
-        ClientSize = new Size(780, 520);
-        BackColor = Palette.Cream;
-        ForeColor = Palette.Ink;
-        Font = Typography.Body;
-        FormBorderStyle = FormBorderStyle.None;
-        StartPosition = FormStartPosition.CenterScreen;
-        KeyPreview = true;
-        DoubleBuffered = true;
-        AutoScaleMode = AutoScaleMode.Dpi;
-        MinimumSize = Size;
-        if (!_previewMode)
-        {
-            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-        }
-
-        var titleBar = BuildTitleBar();
-        _shortcutBadge = (Button)titleBar.Controls["ShortcutBadge"]!;
-        _themeButton = (Button)titleBar.Controls["ThemeButton"]!;
-        Controls.Add(titleBar);
-
-        var headerLogo = new PictureBox
-        {
-            Bounds = new Rectangle(49, 81, 76, 76),
-            Image = _logoImage,
-            SizeMode = PictureBoxSizeMode.Zoom,
-            BackColor = Palette.Yellow,
-            TabStop = false
-        };
-        Controls.Add(headerLogo);
-        Controls.Add(BrutalistControls.MakeLabel(
-            "VAULTLOOP / NO-SAVE", new Rectangle(143, 83, 485, 42),
-            Typography.ProductTitle, Palette.Yellow));
-        Controls.Add(BrutalistControls.MakeLabel("ROCKSTAR CLOUD CONTROL",
-            new Rectangle(145, 126, 480, 22), Typography.MonoCaption, Palette.Yellow));
-        var guideButton = BrutalistControls.CreateButton(
-            "HOW TO USE", new Rectangle(632, 91, 100, 42), Typography.ActionButton,
-            Palette.Ink, Palette.Paper, 3, Palette.Ink, Palette.Blue, null,
-            ContentAlignment.MiddleCenter, Palette.Ink);
-        guideButton.AccessibleName = "Open the no-save instruction guide";
-        guideButton.Click += (_, _) =>
-        {
-            using var guide = new GuideDialog(_darkMode);
-            guide.ShowDialog(this);
-        };
-        Controls.Add(guideButton);
-
-        Controls.Add(BrutalistControls.MakeLabel(
-            "NO-SAVE MODE", new Rectangle(55, 222, 310, 32),
-            Typography.SectionTitle, Palette.Paper));
-        Controls.Add(BrutalistControls.MakeLabel(
-            "Toggle the Rockstar link without cutting the rest of your network.",
-            new Rectangle(56, 258, 320, 44), Typography.Body, Palette.Paper));
-
-        _toggle = new BooleanToggle
-        {
-            Location = new Point(55, 312),
-            Size = new Size(315, 86),
-            AccessibleName = "Toggle no-save mode",
-            AccessibleDescription = "Active blocks the Rockstar link. Inactive restores it."
-        };
-        _toggle.ToggleRequested += (_, _) => ToggleState();
-        Controls.Add(_toggle);
-
-        _stateKicker = BrutalistControls.MakeLabel(
-            "STATUS", new Rectangle(458, 264, 218, 18),
-            Typography.CompactMono, Palette.Acid);
-        _stateTitle = BrutalistControls.MakeLabel(
-            "", new Rectangle(458, 286, 220, 36),
-            Typography.StatusTitle, Palette.Acid);
-        _stateDetail = BrutalistControls.MakeLabel(
-            "", new Rectangle(458, 326, 220, 22),
-            Typography.StatusDetail, Palette.Acid);
-        Controls.AddRange([_stateKicker, _stateTitle, _stateDetail]);
-
-        _shortcutFooter = BrutalistControls.CreateButton(
-            $"{ShortcutText}  //  GTA ONLY", new Rectangle(44, 454, 370, 34),
-            Typography.MonoCaption, Palette.Ink, Palette.Paper, 0, null,
-            Palette.Ink, Palette.Ink, ContentAlignment.MiddleCenter, null);
-        _shortcutFooter.AccessibleName = "Configure the GTA-only keyboard shortcut";
-        _shortcutFooter.Click += (_, _) => ConfigureShortcut();
-        Controls.Add(_shortcutFooter);
-        var adminReady = _previewMode || IsRunningAsAdministrator();
-        _gameStatusLabel = BrutalistControls.MakeLabel(
-            adminReady ? "WAITING FOR GTA  //  SAFE RESTORE" : "ADMIN REQUIRED",
-            new Rectangle(466, 458, 257, 24), Typography.TinyMono, Palette.Ink,
-            adminReady ? Palette.Yellow : Palette.HotPink, ContentAlignment.MiddleCenter);
-        Controls.Add(_gameStatusLabel);
+        var chrome = BuildLayout();
+        _shortcutBadge = chrome.ShortcutBadge;
+        _themeButton = chrome.ThemeButton;
+        _toggle = chrome.Toggle;
+        _stateKicker = chrome.StateKicker;
+        _stateTitle = chrome.StateTitle;
+        _stateDetail = chrome.StateDetail;
+        _shortcutFooter = chrome.ShortcutFooter;
+        _gameStatusLabel = chrome.GameStatusLabel;
 
         _refreshTimer = new System.Windows.Forms.Timer
         {
@@ -221,11 +140,11 @@ internal sealed class MainForm : Form
     {
         base.OnPaint(e);
         e.Graphics.SmoothingMode = SmoothingMode.None;
-        DrawCard(e.Graphics, new Rectangle(28, 68, 724, 102), Palette.Yellow, Palette.Ink);
-        DrawCard(e.Graphics, new Rectangle(28, 194, 724, 228),
+        DrawCard(e.Graphics, HeaderCard, Palette.Yellow, Palette.Ink);
+        DrawCard(e.Graphics, BodyCard,
             _darkMode ? Palette.DarkSurface : Palette.Paper, Palette.Blue);
-        DrawCard(e.Graphics, new Rectangle(432, 248, 280, 110), _stateColor, Palette.Ink);
-        DrawCard(e.Graphics, new Rectangle(28, 446, 724, 48), Palette.Ink, Palette.Blue);
+        DrawCard(e.Graphics, StatusCard, _stateColor, Palette.Ink);
+        DrawCard(e.Graphics, FooterCard, Palette.Ink, Palette.Blue);
         using var borderPen = new Pen(Palette.Ink, 3F);
         e.Graphics.DrawRectangle(borderPen, 1, 1, ClientSize.Width - 3, ClientSize.Height - 3);
     }
@@ -237,72 +156,6 @@ internal sealed class MainForm : Form
         using var bitmap = new Bitmap(ClientSize.Width, ClientSize.Height);
         DrawToBitmap(bitmap, new Rectangle(Point.Empty, ClientSize));
         bitmap.Save(fullPath, ImageFormat.Png);
-    }
-
-    private Panel BuildTitleBar()
-    {
-        var titleBar = new Panel
-        {
-            Bounds = new Rectangle(0, 0, ClientSize.Width, 48),
-            BackColor = Palette.Ink
-        };
-
-        var logo = new PictureBox
-        {
-            Bounds = new Rectangle(12, 7, 34, 34),
-            Image = _logoImage,
-            SizeMode = PictureBoxSizeMode.Zoom,
-            BackColor = Palette.Yellow,
-            TabStop = false
-        };
-        var title = BrutalistControls.MakeLabel(
-            "VAULTLOOP", new Rectangle(58, 7, 280, 34),
-            Typography.WindowTitle, Palette.Ink, Palette.Paper);
-        var theme = BrutalistControls.CreateButton(
-            _darkMode ? "LIGHT THEME" : "DARK THEME",
-            new Rectangle(408, 10, 130, 28), Typography.TinyMono,
-            Palette.Blue, Palette.Ink, 0, null, Palette.Blue, Palette.Blue,
-            ContentAlignment.MiddleCenter, null);
-        theme.Name = "ThemeButton";
-        theme.AccessibleName = _darkMode ? "Switch to light theme" : "Switch to dark theme";
-        theme.Click += (_, _) => ToggleTheme();
-        var shortcut = BrutalistControls.CreateButton(
-            ShortcutText, new Rectangle(548, 10, 104, 28), Typography.CompactMono,
-            Palette.Acid, Palette.Ink, 0, null, Palette.Acid, Palette.Acid,
-            ContentAlignment.MiddleCenter, null);
-        shortcut.Name = "ShortcutBadge";
-        shortcut.AccessibleName = "Configure keyboard shortcut";
-        shortcut.Click += (_, _) => ConfigureShortcut();
-        var minimize = BrutalistControls.CreateButton(
-            "-", new Rectangle(684, 0, 48, 48), Typography.WindowTitle,
-            Palette.Ink, Palette.Paper, 0, null, Palette.Blue, Palette.Blue,
-            ContentAlignment.MiddleCenter, Palette.Ink);
-        var close = BrutalistControls.CreateButton(
-            "X", new Rectangle(732, 0, 48, 48), Typography.WindowTitle,
-            Palette.Ink, Palette.Paper, 0, null, Palette.HotPink, Palette.HotPink,
-            ContentAlignment.MiddleCenter, Palette.Ink);
-        minimize.AccessibleName = "Minimize VaultLoop";
-        close.AccessibleName = "Close VaultLoop";
-
-        minimize.Click += (_, _) => WindowState = FormWindowState.Minimized;
-        close.Click += (_, _) => Close();
-        titleBar.MouseDown += BeginWindowDrag;
-        logo.MouseDown += BeginWindowDrag;
-        title.MouseDown += BeginWindowDrag;
-
-        titleBar.Controls.AddRange([logo, title, theme, shortcut, minimize, close]);
-        return titleBar;
-    }
-
-    private void BeginWindowDrag(object? sender, MouseEventArgs eventArgs)
-    {
-        if (eventArgs.Button != MouseButtons.Left)
-        {
-            return;
-        }
-        NativeMethods.ReleaseCapture();
-        NativeMethods.SendMessage(Handle, NativeMethods.NonClientLeftButtonDown,
-            NativeMethods.HitCaption, 0);
     }
 
     private void HandleShown(object? sender, EventArgs eventArgs)
@@ -421,22 +274,8 @@ internal sealed class MainForm : Form
             return;
         }
 
-        if (snapshot.ForegroundPath is not null)
-        {
-            _verifiedGamePath = snapshot.ForegroundPath;
-            _hotkeyHook.Arm(snapshot.ForegroundWindow);
-            _gameStatusLabel.Text = "GTA READY  //  SAFE RESTORE";
-            _gameStatusLabel.BackColor = Palette.Acid;
-        }
-        else
-        {
-            _hotkeyHook.Disarm();
-            _verifiedGamePath = snapshot.RunningPath;
-            _gameStatusLabel.Text = snapshot.RunningPath is null
-                ? "WAITING FOR GTA"
-                : "GTA IN BACKGROUND";
-            _gameStatusLabel.BackColor = Palette.Yellow;
-        }
+        ApplyGameContext(
+            snapshot.ForegroundPath, snapshot.ForegroundWindow, snapshot.RunningPath);
 
         if (snapshot.FirewallState.HasValue)
         {
@@ -496,8 +335,7 @@ internal sealed class MainForm : Form
         }
 
         _leakReported = true;
-        _gameStatusLabel.Text = "BLOCK NOT EFFECTIVE";
-        _gameStatusLabel.BackColor = Palette.HotPink;
+        SetGameStatus("BLOCK NOT EFFECTIVE", Palette.HotPink);
         ShowStatusToast("BLOCK NOT EFFECTIVE", Palette.Yellow,
             "The rule is active but GTA opened a new connection to a blocked address. " +
             "Run --diagnose to see the endpoints in use.");
@@ -533,62 +371,58 @@ internal sealed class MainForm : Form
 
     private void RestoreAfterGameLoss()
     {
-        _applying = true;
-        Interlocked.Increment(ref _runtimeRefreshVersion);
-        _toggle.Enabled = false;
-        UseWaitCursor = true;
-        try
-        {
-            _firewall!.SetNoSaveEnabled(false);
-            SetDisplayedState(false);
-            ShowStatusToast("NO-SAVE RESTORED", Palette.Acid,
-                "The verified GTA process is gone. No-save was disabled automatically.");
-        }
-        catch (Exception exception)
-        {
-            ShowStatusToast("AUTO-RESTORE FAILED", Palette.Yellow, exception.Message);
-            try
+        RunExclusive(
+            () =>
             {
-                ApplyFirewallState(_firewall!.GetState());
-            }
-            catch
-            {
-                SetUnknownState();
-            }
-        }
-        finally
-        {
-            UseWaitCursor = false;
-            _toggle.Enabled = _stateKnown;
-            _applying = false;
-        }
+                _firewall!.SetNoSaveEnabled(false);
+                SetDisplayedState(false);
+                ShowStatusToast("NO-SAVE RESTORED", Palette.Acid,
+                    "The verified GTA process is gone. No-save was disabled automatically.");
+            },
+            exception =>
+                ShowStatusToast("AUTO-RESTORE FAILED", Palette.Yellow, exception.Message));
     }
 
     private void RefreshGameContext()
     {
-        _hotkeyHook.Disarm();
         if (GameProcessService.TryGetVerifiedForegroundGame(
                 out var foregroundPath, out var foregroundWindow))
         {
-            _verifiedGamePath = foregroundPath;
-            _hotkeyHook.Arm(foregroundWindow);
-            _gameStatusLabel.Text = "GTA READY  //  SAFE RESTORE";
-            _gameStatusLabel.BackColor = Palette.Acid;
+            ApplyGameContext(foregroundPath, foregroundWindow, runningPath: null);
             return;
         }
 
-        if (GameProcessService.TryFindVerifiedRunningGame(out var runningPath))
+        ApplyGameContext(foregroundPath: null, IntPtr.Zero,
+            GameProcessService.TryFindVerifiedRunningGame(out var runningPath)
+                ? runningPath
+                : null);
+    }
+
+    /// <summary>
+    /// Publishes the detected game context: the shortcut is armed only for a verified game in
+    /// the foreground, and the footer reports which of the three situations applies.
+    /// </summary>
+    private void ApplyGameContext(
+        string? foregroundPath, IntPtr foregroundWindow, string? runningPath)
+    {
+        if (foregroundPath is not null)
         {
-            _verifiedGamePath = runningPath;
-            _gameStatusLabel.Text = "GTA IN BACKGROUND";
-            _gameStatusLabel.BackColor = Palette.Yellow;
+            _verifiedGamePath = foregroundPath;
+            _hotkeyHook.Arm(foregroundWindow);
+            SetGameStatus("GTA READY  //  SAFE RESTORE", Palette.Acid);
+            return;
         }
-        else
-        {
-            _verifiedGamePath = null;
-            _gameStatusLabel.Text = "WAITING FOR GTA";
-            _gameStatusLabel.BackColor = Palette.Yellow;
-        }
+
+        _hotkeyHook.Disarm();
+        _verifiedGamePath = runningPath;
+        SetGameStatus(
+            runningPath is null ? "WAITING FOR GTA" : "GTA IN BACKGROUND", Palette.Yellow);
+    }
+
+    private void SetGameStatus(string text, Color background)
+    {
+        _gameStatusLabel.Text = text;
+        _gameStatusLabel.BackColor = background;
     }
 
     private string ShortcutText
@@ -658,54 +492,12 @@ internal sealed class MainForm : Form
 
     private void ApplyState(bool enabled, bool fromHotkey = false)
     {
-        if (_applying || _firewall is null || !_stateKnown)
+        if (!_stateKnown)
         {
             return;
         }
 
-        _applying = true;
-        Interlocked.Increment(ref _runtimeRefreshVersion);
-        _toggle.Enabled = false;
-        UseWaitCursor = true;
-        try
-        {
-            string? gamePath = null;
-            if (enabled)
-            {
-                if (fromHotkey)
-                {
-                    if (!GameProcessService.TryGetVerifiedForegroundGame(
-                            out var foregroundPath, out var foregroundWindow) ||
-                        !GameProcessService.IsCurrentForegroundWindow(foregroundWindow))
-                    {
-                        throw new InvalidOperationException(
-                            "GTA V must remain in the foreground to use the shortcut.");
-                    }
-                    gamePath = foregroundPath;
-                    _verifiedGamePath = foregroundPath;
-                    _hotkeyHook.Arm(foregroundWindow);
-                }
-                else if (GameProcessService.TryFindVerifiedRunningGame(out var runningPath))
-                {
-                    gamePath = runningPath;
-                    _verifiedGamePath = runningPath;
-                }
-                else
-                {
-                    throw new InvalidOperationException(
-                        "Start a verified copy of GTA V before enabling no-save.");
-                }
-            }
-
-            _firewall.SetNoSaveEnabled(enabled, gamePath);
-            SetDisplayedState(enabled);
-            if (fromHotkey)
-            {
-                ShowStatusToast(enabled ? "NO-SAVE ACTIVE" : "NO-SAVE INACTIVE",
-                    enabled ? Palette.HotPink : Palette.Acid);
-            }
-        }
-        catch (Exception exception)
+        RunExclusive(() => MutateState(enabled, fromHotkey), exception =>
         {
             if (fromHotkey)
             {
@@ -716,20 +508,99 @@ internal sealed class MainForm : Form
                 MessageBox.Show(this, exception.Message, "Firewall error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-            try
+        });
+    }
+
+    private void MutateState(bool enabled, bool fromHotkey)
+    {
+        string? gamePath = null;
+        var requestedForegroundWindow = IntPtr.Zero;
+        if (enabled)
+        {
+            if (fromHotkey)
             {
-                ApplyFirewallState(_firewall.GetState());
+                if (!GameProcessService.TryGetVerifiedForegroundGame(
+                        out var foregroundPath, out var liveForegroundWindow) ||
+                    !GameProcessService.IsCurrentForegroundWindow(liveForegroundWindow))
+                {
+                    throw new InvalidOperationException(
+                        "GTA V must remain in the foreground to use the shortcut.");
+                }
+                gamePath = foregroundPath;
+                requestedForegroundWindow = liveForegroundWindow;
+                _verifiedGamePath = foregroundPath;
+                _hotkeyHook.Arm(liveForegroundWindow);
             }
-            catch
+            else if (GameProcessService.TryFindVerifiedRunningGame(out var runningPath))
             {
-                SetUnknownState();
+                gamePath = runningPath;
+                _verifiedGamePath = runningPath;
             }
+            else
+            {
+                throw new InvalidOperationException(
+                    "Start a verified copy of GTA V before enabling no-save.");
+            }
+        }
+
+        if (!Program.IsRunningAsAdministrator())
+        {
+            Program.RelaunchElevated(gamePath, requestedForegroundWindow);
+            Close();
+            return;
+        }
+
+        _firewall!.SetNoSaveEnabled(enabled, gamePath);
+        SetDisplayedState(enabled);
+        if (fromHotkey)
+        {
+            ShowStatusToast(enabled ? "NO-SAVE ACTIVE" : "NO-SAVE INACTIVE",
+                enabled ? Palette.HotPink : Palette.Acid);
+        }
+    }
+
+    /// <summary>
+    /// Runs a firewall mutation with the toggle locked and the refresh loop invalidated, then
+    /// reports a failure the way the calling path requires and resynchronizes the display from
+    /// the firewall itself — a failed mutation leaves the real state unknown.
+    /// </summary>
+    private void RunExclusive(Action mutation, Action<Exception> reportFailure)
+    {
+        if (_applying || _firewall is null)
+        {
+            return;
+        }
+
+        _applying = true;
+        Interlocked.Increment(ref _runtimeRefreshVersion);
+        _toggle.Enabled = false;
+        UseWaitCursor = true;
+        try
+        {
+            mutation();
+        }
+        catch (Exception exception)
+        {
+            reportFailure(exception);
+            ResynchronizeState();
         }
         finally
         {
             UseWaitCursor = false;
             _toggle.Enabled = _stateKnown;
             _applying = false;
+        }
+    }
+
+    private void ResynchronizeState()
+    {
+        try
+        {
+            ApplyFirewallState(_firewall!.GetState());
+        }
+        catch
+        {
+            SetUnknownState();
         }
     }
 
@@ -773,14 +644,11 @@ internal sealed class MainForm : Form
         _toggle.IsStateKnown = true;
         _toggle.Checked = enabled;
         _toggle.Enabled = !_applying;
-        _toggle.AccessibleName = enabled ? "No-save active" : "No-save inactive";
-        _stateColor = enabled ? Palette.HotPink : Palette.Acid;
-        _stateKicker.BackColor = _stateColor;
-        _stateTitle.BackColor = _stateColor;
-        _stateDetail.BackColor = _stateColor;
-        _stateTitle.Text = enabled ? "ACTIVE" : "INACTIVE";
-        _stateDetail.Text = enabled ? "ROCKSTAR LINK BLOCKED" : "ROCKSTAR LINK ONLINE";
-        Invalidate();
+        RenderStatus(
+            enabled ? Palette.HotPink : Palette.Acid,
+            enabled ? "ACTIVE" : "INACTIVE",
+            enabled ? "ROCKSTAR LINK BLOCKED" : "ROCKSTAR LINK ONLINE",
+            enabled ? "No-save active" : "No-save inactive");
     }
 
     private void SetInvalidState()
@@ -790,14 +658,8 @@ internal sealed class MainForm : Form
         _toggle.IsStateKnown = false;
         _toggle.IsRecoveryMode = true;
         _toggle.Enabled = !_applying;
-        _stateColor = Palette.Yellow;
-        _stateKicker.BackColor = _stateColor;
-        _stateTitle.BackColor = _stateColor;
-        _stateDetail.BackColor = _stateColor;
-        _stateTitle.Text = "INVALID";
-        _stateDetail.Text = "CLICK RESTORE, THEN RETRY";
-        _toggle.AccessibleName = "Restore an invalid VaultLoop firewall rule";
-        Invalidate();
+        RenderStatus(Palette.Yellow, "INVALID", "CLICK RESTORE, THEN RETRY",
+            "Restore an invalid VaultLoop firewall rule");
     }
 
     private void SetUnknownState()
@@ -807,13 +669,21 @@ internal sealed class MainForm : Form
         _toggle.IsRecoveryMode = false;
         _toggle.IsStateKnown = false;
         _toggle.Enabled = false;
-        _stateColor = Palette.Yellow;
-        _stateKicker.BackColor = _stateColor;
-        _stateTitle.BackColor = _stateColor;
-        _stateDetail.BackColor = _stateColor;
-        _stateTitle.Text = "UNKNOWN";
-        _stateDetail.Text = "FIREWALL STATE UNAVAILABLE";
-        _toggle.AccessibleName = "No-save state unknown";
+        RenderStatus(Palette.Yellow, "UNKNOWN", "FIREWALL STATE UNAVAILABLE",
+            "No-save state unknown");
+    }
+
+    /// <summary>Paints the status card and its accessible label for one displayed state.</summary>
+    private void RenderStatus(
+        Color color, string title, string detail, string toggleAccessibleName)
+    {
+        _stateColor = color;
+        _stateKicker.BackColor = color;
+        _stateTitle.BackColor = color;
+        _stateDetail.BackColor = color;
+        _stateTitle.Text = title;
+        _stateDetail.Text = detail;
+        _toggle.AccessibleName = toggleAccessibleName;
         Invalidate();
     }
 
@@ -845,6 +715,26 @@ internal sealed class MainForm : Form
             }
         }
 
+        if (!Program.IsRunningAsAdministrator())
+        {
+            if (_firewallState != FirewallRuleState.Inactive)
+            {
+                try
+                {
+                    Program.RelaunchElevated(null, IntPtr.Zero);
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(this,
+                        $"The Rockstar link could not be restored:\n{exception.Message}",
+                        "Restore failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    eventArgs.Cancel = true;
+                    _refreshTimer.Start();
+                }
+            }
+            return;
+        }
+
         try
         {
             _firewall.SetNoSaveEnabled(false);
@@ -864,32 +754,6 @@ internal sealed class MainForm : Form
                 _refreshTimer.Start();
             }
         }
-    }
-
-    private static bool IsRunningAsAdministrator()
-    {
-        using var identity = WindowsIdentity.GetCurrent();
-        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
-    }
-
-    private static Image LoadLogo()
-    {
-        using var stream = Assembly.GetExecutingAssembly()
-            .GetManifestResourceStream("ReplayGlitchLogo.png")
-            ?? throw new InvalidOperationException("Embedded logo resource not found.");
-        using var image = Image.FromStream(stream);
-        return new Bitmap(image);
-    }
-
-    private static void DrawCard(Graphics graphics, Rectangle bounds, Color fill, Color shadow)
-    {
-        using var shadowBrush = new SolidBrush(shadow);
-        using var fillBrush = new SolidBrush(fill);
-        using var borderPen = new Pen(Palette.Ink, 4F);
-        graphics.FillRectangle(shadowBrush,
-            new Rectangle(bounds.X + 8, bounds.Y + 8, bounds.Width, bounds.Height));
-        graphics.FillRectangle(fillBrush, bounds);
-        graphics.DrawRectangle(borderPen, bounds);
     }
 
     private sealed class RuntimeSnapshot

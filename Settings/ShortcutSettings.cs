@@ -10,62 +10,41 @@ internal static class ShortcutSettings
 
     internal static (Keys Modifiers, Keys Key) Default => (DefaultModifiers, DefaultKey);
 
-    internal static (Keys Modifiers, Keys Key) Load()
-    {
-        try
-        {
-            var rawValue = AppSettingsStorage.ReadText(
-                "shortcut.txt", includeLegacy: true, out var fromLegacy);
-            if (rawValue is null)
-            {
-                return (DefaultModifiers, DefaultKey);
-            }
-
-            var parts = rawValue.Split('|');
-            if (parts.Length == 2 &&
-                int.TryParse(parts[0], out var modifiersValue) &&
-                int.TryParse(parts[1], out var keyValue))
-            {
-                var modifiers = (Keys)modifiersValue & Keys.Modifiers;
-                var key = (Keys)keyValue & Keys.KeyCode;
-                if (ShortcutDialog.IsValidShortcut(modifiers, key))
-                {
-                    if (modifiers == Keys.Alt && key == Keys.F8)
-                    {
-                        TryMigrate(DefaultModifiers, DefaultKey, fromLegacy);
-                        return (DefaultModifiers, DefaultKey);
-                    }
-                    TryMigrate(modifiers, key, fromLegacy);
-                    return (modifiers, key);
-                }
-            }
-        }
-        catch
-        {
-            // A malformed or inaccessible setting must not prevent the app from starting.
-        }
-        return (DefaultModifiers, DefaultKey);
-    }
+    internal static (Keys Modifiers, Keys Key) Load() =>
+        AppSettingsStorage.ReadPreference<(Keys Modifiers, Keys Key)>(
+            "shortcut.txt", includeLegacy: true, TryParse,
+            shortcut => Save(shortcut.Modifiers, shortcut.Key),
+            (DefaultModifiers, DefaultKey));
 
     internal static void Save(Keys modifiers, Keys key)
     {
         AppSettingsStorage.WriteText("shortcut.txt", $"{(int)modifiers}|{(int)key}");
     }
 
-    private static void TryMigrate(Keys modifiers, Keys key, bool fromLegacy)
+    /// <summary>
+    /// A stored shortcut is only accepted if it still passes the rules the dialog enforces:
+    /// the reserved combinations can change between versions, and a saved one must not survive.
+    /// </summary>
+    private static bool TryParse(string rawValue, out (Keys Modifiers, Keys Key) shortcut)
     {
-        if (!fromLegacy)
+        shortcut = (DefaultModifiers, DefaultKey);
+        var parts = rawValue.Split('|');
+        if (parts.Length != 2 ||
+            !int.TryParse(parts[0], out var modifiersValue) ||
+            !int.TryParse(parts[1], out var keyValue))
         {
-            return;
+            return false;
         }
-        try
+
+        var modifiers = (Keys)modifiersValue & Keys.Modifiers;
+        var key = (Keys)keyValue & Keys.KeyCode;
+        if (!ShortcutDialog.IsValidShortcut(modifiers, key))
         {
-            Save(modifiers, key);
+            return false;
         }
-        catch
-        {
-            // A valid legacy preference remains usable even if migration cannot be persisted.
-        }
+
+        shortcut = (modifiers, key);
+        return true;
     }
 
     internal static string Format(Keys modifiers, Keys key)

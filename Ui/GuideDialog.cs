@@ -6,7 +6,27 @@ namespace ReplayGlitchGTA;
 
 internal sealed class GuideDialog : BrutalistDialog
 {
-    private readonly GuideStepPanel[] _steps = new GuideStepPanel[6];
+    /// <summary>The workflow, in order. Step numbers, layout, and progress all derive from it.</summary>
+    private static readonly (string Title, string Description)[] Steps =
+    [
+        ("START THE ACTIVITY",
+            "Launch a high-value mission or heist: Cayo Perico, Kortz Center, Diamond Casino, Doomsday, Dr. Dre, or another activity."),
+        ("ENABLE NO-SAVE",
+            "Activate no-save as soon as the activity starts. Keep it active until the activity has been completed."),
+        ("COMPLETE THE ACTIVITY",
+            "Avoid failing if you want the Elite Challenge and its bonus. A failure normally removes only the associated bonus."),
+        ("RETURN TO STORY MODE",
+            "After a successful completion, leave GTA Online and wait until Story Mode has fully loaded."),
+        ("DISABLE NO-SAVE",
+            "Disable no-save and verify that the application clearly displays INACTIVE before continuing."),
+        ("RETURN TO GTA ONLINE",
+            "Rejoin GTA Online. The reward should remain available while the activity can generally be replayed.")
+    ];
+
+    /// <summary>The number of steps stored progress is validated against.</summary>
+    internal static int StepCount => Steps.Length;
+
+    private readonly GuideStepPanel[] _steps = new GuideStepPanel[Steps.Length];
     private readonly Label _currentStepLabel;
     private readonly bool _darkMode;
 
@@ -52,43 +72,23 @@ internal sealed class GuideDialog : BrutalistDialog
         };
         Controls.Add(scrollPanel);
 
-        var titles = new[]
-        {
-            "START THE ACTIVITY",
-            "ENABLE NO-SAVE",
-            "COMPLETE THE ACTIVITY",
-            "RETURN TO STORY MODE",
-            "DISABLE NO-SAVE",
-            "RETURN TO GTA ONLINE"
-        };
-        var descriptions = new[]
-        {
-            "Launch a high-value mission or heist: Cayo Perico, Kortz Center, Diamond Casino, Doomsday, Dr. Dre, or another activity.",
-            "Activate no-save as soon as the activity starts. Keep it active until the activity has been completed.",
-            "Avoid failing if you want the Elite Challenge and its bonus. A failure normally removes only the associated bonus.",
-            "After a successful completion, leave GTA Online and wait until Story Mode has fully loaded.",
-            "Disable no-save and verify that the application clearly displays INACTIVE before continuing.",
-            "Rejoin GTA Online. The reward should remain available while the activity can generally be replayed."
-        };
-
-        for (var index = 0; index < titles.Length; index++)
+        for (var index = 0; index < Steps.Length; index++)
         {
             var stepNumber = index + 1;
-            var panel = BuildStep(stepNumber, titles[index], descriptions[index],
+            var (title, description) = Steps[index];
+            var panel = BuildStep(stepNumber, title, description,
                 new Rectangle(0, index * 64, 664, 56), darkMode);
-            foreach (Control child in panel.Controls)
-            {
-                child.Click += (_, _) =>
-                {
-                    panel.Focus();
-                    SetCurrentStep(stepNumber, persist: true);
-                };
-            }
-            panel.Click += (_, _) =>
+            void SelectStep(object? sender, EventArgs eventArgs)
             {
                 panel.Focus();
                 SetCurrentStep(stepNumber, persist: true);
-            };
+            }
+
+            foreach (Control child in panel.Controls)
+            {
+                child.Click += SelectStep;
+            }
+            panel.Click += SelectStep;
             var stepIndex = index;
             panel.KeyDown += (_, eventArgs) =>
             {
@@ -97,7 +97,8 @@ internal sealed class GuideDialog : BrutalistDialog
                     SetCurrentStep(stepNumber, persist: true);
                     eventArgs.Handled = true;
                 }
-                else if (eventArgs.KeyCode is Keys.Down or Keys.Right && stepIndex < 5)
+                else if (eventArgs.KeyCode is Keys.Down or Keys.Right &&
+                         stepIndex < Steps.Length - 1)
                 {
                     _steps[stepIndex + 1].Focus();
                     SetCurrentStep(stepIndex + 2, persist: true);
@@ -127,7 +128,8 @@ internal sealed class GuideDialog : BrutalistDialog
         scrollPanel.Controls.Add(new Label
         {
             Text = "BONUS — ONE REPLAY GLITCH AT A TIME\n" +
-                   "After one successful replay glitch, do not attempt another one consecutively. " +
+                   "After one successful replay glitch, do not attempt another consecutively. " +
+                   "For Cayo Perico, do not complete it twice within the 144-minute cooldown. " +
                    "A second consecutive attempt resets the progress of any heist or activity, " +
                    "but you keep the money already earned. This is expected behavior, not a bug.",
             Bounds = new Rectangle(0, 390, 664, 88),
@@ -158,10 +160,9 @@ internal sealed class GuideDialog : BrutalistDialog
             Font = Typography.StatusDetail,
             Padding = new Padding(14, 9, 14, 9)
         });
-        var closeButton = BrutalistControls.CreateButton(
+        var closeButton = BrutalistControls.CreateOutlinedButton(
             "GOT IT", new Rectangle(582, 654, 110, 36), Typography.StatusDetail,
-            Palette.Ink, Palette.Paper, 3, Palette.Ink, null, null,
-            ContentAlignment.MiddleCenter, null);
+            Palette.Ink, Palette.Paper);
         closeButton.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
         Controls.Add(closeButton);
         AcceptButton = closeButton;
@@ -238,20 +239,16 @@ internal sealed class GuideDialog : BrutalistDialog
 
     private void SetCurrentStep(int step, bool persist)
     {
-        _currentStepLabel.Text = $"CURRENT STEP  {step} / 6";
+        _currentStepLabel.Text = $"CURRENT STEP  {step} / {Steps.Length}";
         for (var index = 0; index < _steps.Length; index++)
         {
-            var color = index == step - 1
-                ? Palette.Acid
-                : _darkMode ? Palette.DarkSurface : Palette.GuideNeutral;
-            _steps[index].IsCurrent = index == step - 1;
-            _steps[index].BackColor = color;
-            for (var childIndex = 1; childIndex < _steps[index].Controls.Count; childIndex++)
-            {
-                _steps[index].Controls[childIndex].BackColor = color;
-                _steps[index].Controls[childIndex].ForeColor =
-                    index == step - 1 || !_darkMode ? Palette.Ink : Palette.Paper;
-            }
+            var isCurrent = index == step - 1;
+            _steps[index].IsCurrent = isCurrent;
+            _steps[index].SetStepColors(
+                isCurrent
+                    ? Palette.Acid
+                    : _darkMode ? Palette.DarkSurface : Palette.GuideNeutral,
+                isCurrent || !_darkMode ? Palette.Ink : Palette.Paper);
         }
         if (persist)
         {

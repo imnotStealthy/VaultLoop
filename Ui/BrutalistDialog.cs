@@ -34,10 +34,9 @@ internal abstract class BrutalistDialog : Form
             Font = Typography.DialogTitleBar,
             TextAlign = ContentAlignment.MiddleLeft
         };
-        var closeButton = BrutalistControls.CreateButton(
+        var closeButton = BrutalistControls.CreateOutlinedButton(
             "X", new Rectangle(size.Width - 48, 0, 48, 44), Typography.StatusDetail,
-            Palette.Ink, Palette.Paper, 3, Palette.Ink, null, null,
-            ContentAlignment.MiddleCenter, null);
+            Palette.Ink, Palette.Paper);
         closeButton.AccessibleName = "Close dialog";
         closeButton.FlatAppearance.BorderSize = 0;
         closeButton.FlatAppearance.MouseOverBackColor = Palette.AlertRed;
@@ -48,8 +47,7 @@ internal abstract class BrutalistDialog : Form
             DialogResult = DialogResult.Cancel;
             Close();
         };
-        titleBar.MouseDown += BeginDrag;
-        titleLabel.MouseDown += BeginDrag;
+        WindowDrag.Attach(this, titleBar, titleLabel);
         titleBar.Controls.AddRange([titleLabel, closeButton]);
         Controls.Add(titleBar);
     }
@@ -59,16 +57,5 @@ internal abstract class BrutalistDialog : Form
         base.OnPaint(e);
         using var pen = new Pen(Palette.Ink, 3F);
         e.Graphics.DrawRectangle(pen, 1, 1, ClientSize.Width - 3, ClientSize.Height - 3);
-    }
-
-    private void BeginDrag(object? sender, MouseEventArgs eventArgs)
-    {
-        if (eventArgs.Button != MouseButtons.Left)
-        {
-            return;
-        }
-        NativeMethods.ReleaseCapture();
-        NativeMethods.SendMessage(Handle, NativeMethods.NonClientLeftButtonDown,
-            NativeMethods.HitCaption, 0);
     }
 }
