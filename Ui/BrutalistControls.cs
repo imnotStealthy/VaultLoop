@@ -3,51 +3,75 @@ using System.Windows.Forms;
 
 namespace ReplayGlitchGTA;
 
+/// <summary>
+/// Builds the flat, hard-edged controls the interface is made of.
+/// </summary>
 internal static class BrutalistControls
 {
-    internal static Button CreateButton(
-        string text,
-        Rectangle bounds,
-        Font font,
-        Color backColor,
-        Color foreColor,
-        int borderSize,
-        Color? borderColor,
-        Color? hoverBackColor,
-        Color? pressedBackColor,
-        ContentAlignment textAlignment,
-        Color? hoverForeColor)
+    /// <summary>
+    /// A button drawn as a bordered block: the dialog vocabulary, where the border carries the
+    /// shape and the color stays put under the pointer.
+    /// </summary>
+    internal static Button CreateOutlinedButton(
+        string text, Rectangle bounds, Font font, Color backColor, Color foreColor) =>
+        CreateButton(text, bounds, new ButtonStyle
+        {
+            Font = font,
+            BackColor = backColor,
+            ForeColor = foreColor,
+            BorderSize = 3,
+            BorderColor = Palette.Ink
+        });
+
+    /// <summary>
+    /// A borderless button that reacts by swapping its background: the window-chrome
+    /// vocabulary, where the surrounding block already provides the edges.
+    /// </summary>
+    internal static Button CreateChromeButton(
+        string text, Rectangle bounds, Font font, Color backColor, Color foreColor,
+        Color hoverBackColor, Color? hoverForeColor = null) =>
+        CreateButton(text, bounds, new ButtonStyle
+        {
+            Font = font,
+            BackColor = backColor,
+            ForeColor = foreColor,
+            HoverBackColor = hoverBackColor,
+            PressedBackColor = hoverBackColor,
+            HoverForeColor = hoverForeColor
+        });
+
+    internal static Button CreateButton(string text, Rectangle bounds, ButtonStyle style)
     {
         var button = new Button
         {
             Text = text,
             Bounds = bounds,
-            Font = font,
-            BackColor = backColor,
-            ForeColor = foreColor,
+            Font = style.Font,
+            BackColor = style.BackColor,
+            ForeColor = style.ForeColor,
             FlatStyle = FlatStyle.Flat,
             Cursor = Cursors.Hand,
             UseVisualStyleBackColor = false,
-            TextAlign = textAlignment
+            TextAlign = style.TextAlignment
         };
-        button.FlatAppearance.BorderSize = borderSize;
-        if (borderColor.HasValue)
+        button.FlatAppearance.BorderSize = style.BorderSize;
+        if (style.BorderColor.HasValue)
         {
-            button.FlatAppearance.BorderColor = borderColor.Value;
+            button.FlatAppearance.BorderColor = style.BorderColor.Value;
         }
-        if (hoverBackColor.HasValue)
+        if (style.HoverBackColor.HasValue)
         {
-            button.FlatAppearance.MouseOverBackColor = hoverBackColor.Value;
+            button.FlatAppearance.MouseOverBackColor = style.HoverBackColor.Value;
         }
-        if (pressedBackColor.HasValue)
+        if (style.PressedBackColor.HasValue)
         {
-            button.FlatAppearance.MouseDownBackColor = pressedBackColor.Value;
+            button.FlatAppearance.MouseDownBackColor = style.PressedBackColor.Value;
         }
-        if (hoverForeColor.HasValue)
+        if (style.HoverForeColor.HasValue)
         {
-            var originalForeColor = foreColor;
-            button.MouseEnter += (_, _) => button.ForeColor = hoverForeColor.Value;
-            button.MouseLeave += (_, _) => button.ForeColor = originalForeColor;
+            var restingForeColor = style.ForeColor;
+            button.MouseEnter += (_, _) => button.ForeColor = style.HoverForeColor.Value;
+            button.MouseLeave += (_, _) => button.ForeColor = restingForeColor;
         }
         return button;
     }
@@ -69,4 +93,21 @@ internal static class BrutalistControls
             TextAlign = alignment,
             AutoEllipsis = true
         };
+
+    /// <summary>
+    /// How one button is painted. Everything except the two colors it always needs has a
+    /// default, so a call site only states what makes that button different.
+    /// </summary>
+    internal sealed class ButtonStyle
+    {
+        internal Font Font { get; set; } = Typography.Body;
+        internal Color BackColor { get; set; } = Palette.Paper;
+        internal Color ForeColor { get; set; } = Palette.Ink;
+        internal int BorderSize { get; set; }
+        internal Color? BorderColor { get; set; }
+        internal Color? HoverBackColor { get; set; }
+        internal Color? PressedBackColor { get; set; }
+        internal Color? HoverForeColor { get; set; }
+        internal ContentAlignment TextAlignment { get; set; } = ContentAlignment.MiddleCenter;
+    }
 }

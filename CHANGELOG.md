@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1
+
+- Changed elevation to on demand: VaultLoop starts as the current user and requests
+  administrator rights only when a firewall change is required.
+- Reorganized the codebase without changing behavior: window layout separated from
+  window behavior, Authenticode verification and its cache extracted from game
+  detection, and the duplicated firewall, status, settings, and window-chrome code
+  reduced to single implementations.
+
 ## 1.2.0
 
 - Added crash watchdog, next-start recovery, and `--restore`.

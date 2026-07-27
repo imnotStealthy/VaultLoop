@@ -74,17 +74,21 @@ internal static class RockstarNetworks
     internal static string? BlockedConfigurationError => Configuration.Value.Error;
 
     /// <summary>The allocations a configured set is allowed to stay within.</summary>
-    internal static IReadOnlyList<IpPrefix> OnlineServiceAllocations
+    internal static IReadOnlyList<IpPrefix> OnlineServiceAllocations { get; } =
+        ExtractPrefixes(OnlinePrefixes);
+
+    /// <summary>
+    /// The active set as the comma-separated canonical list the firewall rule carries. The
+    /// rule and the check that validates it must be built from the same rendering.
+    /// </summary>
+    internal static string FormatBlockedSet()
     {
-        get
+        var canonical = new List<string>();
+        foreach (var prefix in BlockedSet)
         {
-            var allocations = new List<IpPrefix>();
-            foreach (var entry in OnlinePrefixes)
-            {
-                allocations.Add(entry.Prefix);
-            }
-            return allocations;
+            canonical.Add(prefix.Canonical);
         }
+        return string.Join(",", canonical);
     }
 
     internal static bool IsBlocked(IPAddress address)
@@ -133,6 +137,17 @@ internal static class RockstarNetworks
         return configured is null
             ? new BlockedConfiguration(builtIn, "built-in default", error)
             : new BlockedConfiguration(configured, BlockedEndpointsSettings.FileName, error);
+    }
+
+    private static IReadOnlyList<IpPrefix> ExtractPrefixes(
+        IEnumerable<(IpPrefix Prefix, string Name)> entries)
+    {
+        var prefixes = new List<IpPrefix>();
+        foreach (var entry in entries)
+        {
+            prefixes.Add(entry.Prefix);
+        }
+        return prefixes;
     }
 
     private static IReadOnlyList<IpPrefix> Parse(IEnumerable<string> values)

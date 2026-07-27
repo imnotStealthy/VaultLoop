@@ -40,40 +40,25 @@ internal sealed class FirewallService
     private const int MaximumConfirmationDelayMilliseconds = 640;
     private static readonly int[] KnownProfiles = [1, 2, 4];
 
-    internal FirewallRuleState GetState()
+    internal FirewallRuleState GetState() => WithPolicy((policy, rules) =>
     {
-        object? policyObject = null;
-        object? rulesObject = null;
-        try
+        var current = InspectRule(rules, RuleName, requireCurrentShape: true);
+        var previous = InspectRule(rules, PreviousRuleName, requireCurrentShape: false);
+        var legacy = InspectRule(rules, LegacyRuleName, requireCurrentShape: false);
+        if (current == RuleInspection.Missing &&
+            previous == RuleInspection.Missing &&
+            legacy == RuleInspection.Missing)
         {
-            policyObject = CreateComObject("HNetCfg.FwPolicy2");
-            dynamic policy = policyObject;
-            rulesObject = policy.Rules;
-            dynamic rules = rulesObject;
-
-            var current = InspectRule(rules, RuleName, requireCurrentShape: true);
-            var previous = InspectRule(rules, PreviousRuleName, requireCurrentShape: false);
-            var legacy = InspectRule(rules, LegacyRuleName, requireCurrentShape: false);
-            if (current == RuleInspection.Missing &&
-                previous == RuleInspection.Missing &&
-                legacy == RuleInspection.Missing)
-            {
-                return FirewallRuleState.Inactive;
-            }
-
-            return current == RuleInspection.Exact &&
-                   previous == RuleInspection.Missing &&
-                   legacy == RuleInspection.Missing &&
-                   PolicyCanEnforce(policy)
-                ? FirewallRuleState.Active
-                : FirewallRuleState.Invalid;
+            return FirewallRuleState.Inactive;
         }
-        finally
-        {
-            ReleaseComObject(rulesObject);
-            ReleaseComObject(policyObject);
-        }
-    }
+
+        return current == RuleInspection.Exact &&
+               previous == RuleInspection.Missing &&
+               legacy == RuleInspection.Missing &&
+               PolicyCanEnforce(policy)
+            ? FirewallRuleState.Active
+            : FirewallRuleState.Invalid;
+    });
 
     internal void SetNoSaveEnabled(bool enabled, string? gameExecutablePath = null)
     {
@@ -109,49 +94,49 @@ internal sealed class FirewallService
 
     private static void ApplyRuleMutation(bool enabled, string? gameExecutablePath)
     {
-        object? policyObject = null;
-        object? rulesObject = null;
-        object? ruleObject = null;
-        try
+        WithPolicy((policy, rules) =>
         {
-            policyObject = CreateComObject("HNetCfg.FwPolicy2");
-            dynamic policy = policyObject;
             if (enabled && !PolicyCanEnforce(policy))
             {
                 throw new InvalidOperationException(
                     "Windows Firewall is disabled or locked by policy.");
             }
-            rulesObject = policy.Rules;
-            dynamic rules = rulesObject;
 
             RemoveManagedRule(rules, RuleName);
             RemoveManagedRule(rules, PreviousRuleName);
             RemoveManagedRule(rules, LegacyRuleName);
             if (enabled)
             {
-                ruleObject = CreateComObject("HNetCfg.FWRule");
-                dynamic rule = ruleObject;
-                rule.Name = RuleName;
-                rule.Description = RuleMarker;
-                rule.Grouping = RuleGrouping;
-                rule.Direction = RuleDirectionOutbound;
-                rule.Action = RuleActionBlock;
-                rule.Protocol = ProtocolAny;
-                rule.LocalAddresses = "*";
-                rule.RemoteAddresses = BuildRemoteAddresses();
-                rule.ApplicationName = Path.GetFullPath(gameExecutablePath!);
-                rule.Profiles = ProfilesAll;
-                rule.InterfaceTypes = "All";
-                rule.EdgeTraversal = false;
-                rule.Enabled = true;
-                rules.Add(rule);
+                AddManagedRule(rules, gameExecutablePath!);
             }
+        });
+    }
+
+    private static void AddManagedRule(dynamic rules, string gameExecutablePath)
+    {
+        object? ruleObject = null;
+        try
+        {
+            ruleObject = CreateComObject("HNetCfg.FWRule");
+            dynamic rule = ruleObject;
+            rule.Name = RuleName;
+            rule.Description = RuleMarker;
+            rule.Grouping = RuleGrouping;
+            rule.Direction = RuleDirectionOutbound;
+            rule.Action = RuleActionBlock;
+            rule.Protocol = ProtocolAny;
+            rule.LocalAddresses = "*";
+            rule.RemoteAddresses = RockstarNetworks.FormatBlockedSet();
+            rule.ApplicationName = Path.GetFullPath(gameExecutablePath);
+            rule.Profiles = ProfilesAll;
+            rule.InterfaceTypes = "All";
+            rule.EdgeTraversal = false;
+            rule.Enabled = true;
+            rules.Add(rule);
         }
         finally
         {
             ReleaseComObject(ruleObject);
-            ReleaseComObject(rulesObject);
-            ReleaseComObject(policyObject);
         }
     }
 
@@ -213,21 +198,29 @@ internal sealed class FirewallService
     private static bool IsExactCurrentRule(dynamic rule)
     {
         var applicationName = Convert.ToString(rule.ApplicationName)?.Trim().Trim('"') ?? "";
-        return (bool)rule.Enabled &&
-               (int)rule.Direction == RuleDirectionOutbound &&
-               (int)rule.Action == RuleActionBlock &&
-               (int)rule.Protocol == ProtocolAny &&
-               (int)rule.Profiles == ProfilesAll &&
-               string.Equals(Convert.ToString(rule.LocalAddresses), "*",
-                   StringComparison.Ordinal) &&
-               string.Equals(Convert.ToString(rule.InterfaceTypes), "All",
-                   StringComparison.OrdinalIgnoreCase) &&
-               !(bool)rule.EdgeTraversal &&
+        return HasManagedBlockShape(rule) &&
                string.Equals(Convert.ToString(rule.Description), RuleMarker,
                    StringComparison.Ordinal) &&
                TargetsOnlyManagedAddresses(Convert.ToString(rule.RemoteAddresses) ?? "") &&
                GameProcessService.IsTrustedGameExecutable(applicationName);
     }
+
+    /// <summary>
+    /// The rule shape every VaultLoop rule shares, current or historical: an enabled outbound
+    /// block over every protocol and profile, on all interfaces, with no edge traversal.
+    /// What separates the variants is the marker, the addresses, and the application binding.
+    /// </summary>
+    private static bool HasManagedBlockShape(dynamic rule) =>
+        (bool)rule.Enabled &&
+        (int)rule.Direction == RuleDirectionOutbound &&
+        (int)rule.Action == RuleActionBlock &&
+        (int)rule.Protocol == ProtocolAny &&
+        (int)rule.Profiles == ProfilesAll &&
+        string.Equals(Convert.ToString(rule.LocalAddresses), "*",
+            StringComparison.Ordinal) &&
+        string.Equals(Convert.ToString(rule.InterfaceTypes), "All",
+            StringComparison.OrdinalIgnoreCase) &&
+        !(bool)rule.EdgeTraversal;
 
     private static void RemoveManagedRule(dynamic rules, string name)
     {
@@ -279,16 +272,7 @@ internal sealed class FirewallService
     }
 
     private static bool IsExactHistoricalRule(dynamic rule) =>
-        (bool)rule.Enabled &&
-        (int)rule.Direction == RuleDirectionOutbound &&
-        (int)rule.Action == RuleActionBlock &&
-        (int)rule.Protocol == ProtocolAny &&
-        (int)rule.Profiles == ProfilesAll &&
-        string.Equals(Convert.ToString(rule.LocalAddresses), "*",
-            StringComparison.Ordinal) &&
-        string.Equals(Convert.ToString(rule.InterfaceTypes), "All",
-            StringComparison.OrdinalIgnoreCase) &&
-        !(bool)rule.EdgeTraversal &&
+        HasManagedBlockShape(rule) &&
         string.IsNullOrWhiteSpace(Convert.ToString(rule.ApplicationName)) &&
         string.IsNullOrWhiteSpace(Convert.ToString(rule.ServiceName)) &&
         TargetsOnlyLegacyAddress(Convert.ToString(rule.RemoteAddresses) ?? "");
@@ -314,16 +298,6 @@ internal sealed class FirewallService
             }
         }
         return true;
-    }
-
-    private static string BuildRemoteAddresses()
-    {
-        var addresses = new List<string>();
-        foreach (var prefix in RockstarNetworks.BlockedSet)
-        {
-            addresses.Add(prefix.Canonical);
-        }
-        return string.Join(",", addresses);
     }
 
     /// <summary>
@@ -379,6 +353,37 @@ internal sealed class FirewallService
                address.Equals($"{LegacyRemoteAddress}/255.255.255.255",
                    StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Opens the firewall policy and its rule collection, hands both to
+    /// <paramref name="operation"/>, and releases them in reverse order whatever happens.
+    /// Every COM object taken here is released here: a leaked reference keeps the firewall
+    /// service alive and makes a later state read observe a stale rule collection.
+    /// </summary>
+    private static T WithPolicy<T>(Func<dynamic, dynamic, T> operation)
+    {
+        object? policyObject = null;
+        object? rulesObject = null;
+        try
+        {
+            policyObject = CreateComObject("HNetCfg.FwPolicy2");
+            dynamic policy = policyObject;
+            rulesObject = policy.Rules;
+            return operation(policy, rulesObject);
+        }
+        finally
+        {
+            ReleaseComObject(rulesObject);
+            ReleaseComObject(policyObject);
+        }
+    }
+
+    private static void WithPolicy(Action<dynamic, dynamic> operation) =>
+        WithPolicy<object?>((policy, rules) =>
+        {
+            operation(policy, rules);
+            return null;
+        });
 
     private static object CreateComObject(string programmaticId)
     {
