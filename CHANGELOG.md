@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.5
+
+- Added optional controller shortcuts for Xbox, DualShock 4, DualSense, and
+  DualSense Edge controllers. A shortcut uses an exact two- or three-button
+  combination held for 500 milliseconds.
+- Added system tray controls, an optional foreground-only status HUD, and a
+  **START WITH WINDOWS** option.
+- Applied the same verified-GTA foreground gate to keyboard and controller
+  shortcuts.
+- Reorganized controller input, runtime polling, tray handling, and the mini HUD
+  into focused files without changing firewall behavior or the window layout.
+
 ## 1.2.1
 
 - Changed elevation to on demand: VaultLoop starts as the current user and requests

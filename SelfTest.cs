@@ -24,8 +24,8 @@ internal static class SelfTest
 
         var checks = new CheckList();
 
-        checks.Verify("assembly version is 1.2.1.0",
-            () => typeof(Program).Assembly.GetName().Version?.ToString() == "1.2.1.0");
+        checks.Verify("assembly version is 1.2.5.0",
+            () => typeof(Program).Assembly.GetName().Version?.ToString() == "1.2.5.0");
         checks.Verify("assembly targets the canonical .NET Framework runtime",
             () => typeof(Program).Assembly.ImageRuntimeVersion == "v4.0.30319");
         checks.Verify("embedded logo resource is present",

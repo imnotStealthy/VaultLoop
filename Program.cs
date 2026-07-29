@@ -10,8 +10,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("VaultLoop")]
 [assembly: AssemblyDescription("GTA V no-save firewall link controller")]
 [assembly: AssemblyProduct("VaultLoop")]
-[assembly: AssemblyVersion("1.2.1.0")]
-[assembly: AssemblyFileVersion("1.2.1.0")]
+[assembly: AssemblyVersion("1.2.5.0")]
+[assembly: AssemblyFileVersion("1.2.5.0")]
 #endif
 
 namespace ReplayGlitchGTA;
