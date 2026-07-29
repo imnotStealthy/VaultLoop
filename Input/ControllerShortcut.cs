@@ -76,10 +76,13 @@ internal sealed class ControllerShortcut
     internal string DeviceId { get; }
     internal ControllerButtons Buttons { get; }
 
-    internal string DisplayName => DeviceKind switch
+    internal string DisplayName => FormatDeviceName(DeviceKind, DeviceId);
+
+    internal static string FormatDeviceName(
+        ControllerDeviceKind deviceKind, string deviceId) => deviceKind switch
     {
         ControllerDeviceKind.XInput =>
-            $"Xbox Controller {ParseXInputSlot(DeviceId) + 1}",
+            $"Xbox Controller {ParseXInputSlot(deviceId) + 1}",
         ControllerDeviceKind.DualShock4 => "DualShock 4",
         ControllerDeviceKind.DualSense => "DualSense",
         _ => "Controller"

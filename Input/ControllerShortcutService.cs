@@ -719,14 +719,8 @@ internal sealed class ControllerShortcutService : IDisposable
         internal string DeviceId { get; }
         internal ControllerDeviceKind DeviceKind { get; }
         internal ControllerButtons Buttons { get; }
-        internal string DisplayName => DeviceKind switch
-        {
-            ControllerDeviceKind.XInput =>
-                $"Xbox Controller {ControllerShortcut.ParseXInputSlot(DeviceId) + 1}",
-            ControllerDeviceKind.DualShock4 => "DualShock 4",
-            ControllerDeviceKind.DualSense => "DualSense",
-            _ => "Controller"
-        };
+        internal string DisplayName =>
+            ControllerShortcut.FormatDeviceName(DeviceKind, DeviceId);
     }
 
 }
