@@ -49,7 +49,8 @@ internal sealed partial class MainForm
         var titleBar = BuildTitleBar();
         Controls.Add(titleBar);
         BuildHeader();
-        BuildNoSaveSection(out var toggle, out var kicker, out var title, out var detail);
+        BuildNoSaveSection(
+            out var toggle, out var kicker, out var title, out var detail, out var hudVisibility);
         BuildFooter(out var shortcutFooter, out var gameStatus);
 
         return new Chrome
@@ -60,6 +61,7 @@ internal sealed partial class MainForm
             StateKicker = kicker,
             StateTitle = title,
             StateDetail = detail,
+            HudVisibilityButton = hudVisibility,
             ShortcutFooter = shortcutFooter,
             GameStatusLabel = gameStatus
         };
@@ -106,7 +108,7 @@ internal sealed partial class MainForm
         minimize.AccessibleName = "Minimize VaultLoop";
         close.AccessibleName = "Close VaultLoop";
 
-        minimize.Click += (_, _) => WindowState = FormWindowState.Minimized;
+        minimize.Click += (_, _) => MinimizeToTray();
         close.Click += (_, _) => Close();
         WindowDrag.Attach(this, titleBar, logo, title);
 
@@ -152,7 +154,8 @@ internal sealed partial class MainForm
     }
 
     private void BuildNoSaveSection(
-        out BooleanToggle toggle, out Label kicker, out Label title, out Label detail)
+        out BooleanToggle toggle, out Label kicker, out Label title, out Label detail,
+        out Button hudVisibility)
     {
         Controls.Add(BrutalistControls.MakeLabel(
             "NO-SAVE MODE", new Rectangle(55, 222, 310, 32),
@@ -165,14 +168,32 @@ internal sealed partial class MainForm
         {
             Location = new Point(55, 312),
             Size = new Size(315, 86),
+            Enabled = _isAdministrator,
             AccessibleName = "Toggle no-save mode",
             AccessibleDescription = "Active blocks the Rockstar link. Inactive restores it."
         };
         toggle.ToggleRequested += (_, _) => ToggleState();
         Controls.Add(toggle);
+        if (!_isAdministrator)
+        {
+            toggle.Visible = false;
+            var adminRequired = BrutalistControls.CreateButton(
+                "ADMIN REQUIRED", toggle.Bounds, new BrutalistControls.ButtonStyle
+                {
+                    Font = Typography.StatusTitle,
+                    BackColor = SystemColors.ControlDark,
+                    ForeColor = SystemColors.GrayText,
+                    BorderSize = 4,
+                    BorderColor = Palette.Ink
+                });
+            adminRequired.Enabled = false;
+            adminRequired.AccessibleName =
+                "No-save unavailable until VaultLoop is launched as administrator";
+            Controls.Add(adminRequired);
+        }
 
         kicker = BrutalistControls.MakeLabel(
-            "STATUS", new Rectangle(458, 264, 218, 18),
+            "STATUS", new Rectangle(458, 264, 150, 18),
             Typography.CompactMono, Palette.Acid);
         title = BrutalistControls.MakeLabel(
             "", new Rectangle(458, 286, 220, 36),
@@ -180,24 +201,44 @@ internal sealed partial class MainForm
         detail = BrutalistControls.MakeLabel(
             "", new Rectangle(458, 326, 220, 22),
             Typography.StatusDetail, Palette.Acid);
-        Controls.AddRange([kicker, title, detail]);
+        hudVisibility = BrutalistControls.CreateChromeButton(
+            "HUD ON", new Rectangle(620, 263, 80, 22), Typography.TinyMono,
+            Palette.Ink, Palette.Paper, Palette.Blue, Palette.Ink);
+        hudVisibility.Name = "HudVisibilityButton";
+        hudVisibility.AccessibleName = "Hide the no-save HUD";
+        hudVisibility.Click += (_, _) => ToggleHudVisibility();
+        Controls.AddRange([kicker, title, detail, hudVisibility]);
     }
 
     private void BuildFooter(out Button shortcutFooter, out Label gameStatus)
     {
         shortcutFooter = BrutalistControls.CreateChromeButton(
-            $"{ShortcutText}  //  GTA ONLY", new Rectangle(44, 454, 370, 34),
+            $"{ShortcutText}  //  GTA ONLY", new Rectangle(44, 454, 270, 34),
             Typography.MonoCaption, Palette.Ink, Palette.Paper, Palette.Ink);
         shortcutFooter.AccessibleName = "Configure the GTA-only keyboard shortcut";
         shortcutFooter.Click += (_, _) => ConfigureShortcut();
         Controls.Add(shortcutFooter);
 
-        // Preview renders show the ready state: the elevation prompt only appears on demand.
-        var adminReady = _previewMode || Program.IsRunningAsAdministrator();
+        var launchAsAdmin = BrutalistControls.CreateChromeButton(
+            _isAdministrator ? "ADMIN READY" : "LAUNCH AS ADMIN",
+            new Rectangle(322, 454, 172, 34), Typography.TinyMono,
+            _isAdministrator ? SystemColors.ControlDark : Palette.HotPink,
+            _isAdministrator ? SystemColors.GrayText : Palette.Ink,
+            _isAdministrator ? SystemColors.ControlDark : Palette.Yellow);
+        launchAsAdmin.Name = "LaunchAsAdminButton";
+        launchAsAdmin.Enabled = !_isAdministrator;
+        launchAsAdmin.Cursor = _isAdministrator ? Cursors.Default : Cursors.Hand;
+        launchAsAdmin.AccessibleName = _isAdministrator
+            ? "VaultLoop is running as administrator"
+            : "Launch VaultLoop as administrator";
+        launchAsAdmin.Click += (_, _) => LaunchAsAdministrator();
+        Controls.Add(launchAsAdmin);
+
         gameStatus = BrutalistControls.MakeLabel(
-            adminReady ? "WAITING FOR GTA  //  SAFE RESTORE" : "ADMIN ON DEMAND",
-            new Rectangle(466, 458, 257, 24), Typography.TinyMono, Palette.Ink,
-            adminReady ? Palette.Yellow : Palette.HotPink, ContentAlignment.MiddleCenter);
+            _isAdministrator ? "WAITING FOR GTA" : "ADMIN REQUIRED",
+            new Rectangle(502, 458, 221, 24), Typography.TinyMono, Palette.Ink,
+            _isAdministrator ? Palette.Yellow : Palette.HotPink,
+            ContentAlignment.MiddleCenter);
         Controls.Add(gameStatus);
     }
 
@@ -231,6 +272,7 @@ internal sealed partial class MainForm
         internal Label StateKicker { get; set; } = null!;
         internal Label StateTitle { get; set; } = null!;
         internal Label StateDetail { get; set; } = null!;
+        internal Button HudVisibilityButton { get; set; } = null!;
         internal Button ShortcutFooter { get; set; } = null!;
         internal Label GameStatusLabel { get; set; } = null!;
     }

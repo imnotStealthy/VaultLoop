@@ -1,208 +1,149 @@
-![VaultLoop banner](docs/vaultloop-banner.png)
-
 # VaultLoop
 
-VaultLoop is a Windows desktop controller for a narrowly scoped outbound firewall
-rule used by GTA V no-save workflows. The UI is English-only and the release
-artifact is a single `VaultLoop.exe`.
+VaultLoop is a Windows x64 application that creates or removes one outbound
+Windows Firewall rule for GTA V and GTA V Enhanced no-save sessions. It verifies
+the game executable and reports the rule state in a WinForms window, a tray icon,
+and an optional HUD.
 
-## Safety model
+## Requirements
 
-- The managed firewall rule is accepted as active only when every expected
-  property matches, including an exact match on the blocked address set.
-- The rule is scoped to a locally installed, Authenticode-valid Rockstar
-  `GTA5.exe` or `GTA5_Enhanced.exe`. Because the rule also names that executable,
-  nothing outside the game is affected even though the rule targets a network
-  range rather than a single address.
-- The keyboard shortcut is armed only while that verified game is foreground.
-- Injected keyboard events are rejected.
-- Normal exit, Windows shutdown, a watchdog process, and next-start recovery all
-  attempt to restore the rule.
-- If the verified game disappears while no-save is active, the rule is restored
-  automatically after a few seconds. The rule names the game executable by path,
-  so leaving it in place would silently block a relaunched GTA.
-- While no-save is active, the application watches the game's connections. If GTA
-  opens a *new* connection to a blocked address, the block is not working and the
-  status bar switches to `BLOCK NOT EFFECTIVE`.
-- `VaultLoop.exe --restore` provides an explicit emergency restore command.
+- Windows x64. TODO: Record the minimum supported Windows release.
+- .NET Framework 4.8.
+- A local `GTA5.exe` or `GTA5_Enhanced.exe` with a valid Rockstar Authenticode signature.
+- Administrator approval when VaultLoop changes or restores the firewall rule.
+- For source builds: Git, the .NET SDK, and the 64-bit .NET Framework 4.8
+  reference assemblies.
+- TODO: Record the minimum supported .NET SDK version for source builds.
 
-No process can guarantee cleanup after a total power loss. VaultLoop therefore
-checks for and removes a stale managed rule at the next launch.
+## Install
 
-The application validates the Windows rule, not Rockstar server behavior. Game
-updates can change endpoints or cooldowns, so the UI does not treat a rule as
-proof of a successful online exploit.
-
-## Blocked address set
-
-The set is a single address:
-
-| Address | Source |
-| --- | --- |
-| `192.81.241.171` | Inside Take-Two's RSONET-NA1 (ARIN allocation "RSGEWR"). Observed in the game's own traffic, and the only address the original AutoHotkey script blocked. |
-
-**Confirmed working.** With this address blocked and the game correctly detected,
-GTA reports `SAVING FAILED — the Rockstar cloud servers are currently unavailable`
-and the session stays alive, which is the wanted behaviour.
-
-Reaching that took two corrections, and both matter if the behaviour ever regresses:
-
-- **Game detection has to work first.** Resolving the game's path through
-  `Process.MainModule` fails against anti-cheat protection, so VaultLoop reported
-  "Start a verified copy of GTA V" and **never created a rule at all**. Every
-  earlier no-save attempt was silently a no-op, which looked like the block being
-  ineffective. See `GameProcessService.TryGetProcessImagePath`.
-- **The set must not be widened.** Blocking the surrounding `192.81.241.0/24`
-  reaches Rockstar authentication: the game drops the session mid-activity with
-  `Unable to connect to Rockstar Games Services to authenticate`, before any save
-  would happen. The neighbours of this address carry auth traffic.
-
-Use these three outcomes to tell a misconfiguration apart from a game update:
-
-| What the game shows | What it means |
-| --- | --- |
-| `SAVING FAILED — ... your progress will be saved when the connection is re-established.` | **Correct.** The save fails, the session survives. |
-| `Unable to connect to Rockstar Games Services to authenticate` | The blocked set reached the authentication path. Too wide. |
-| The activity is consumed, no message at all | Nothing was blocked. Check that the game is detected — run `--diagnose`. |
-
-### Tuning the set
-
-The built-in set is the working one, so no configuration is needed. If a game
-update moves the endpoint, create `%LOCALAPPDATA%\VaultLoop\endpoints.txt`, one
-address or prefix per line; `#` starts a comment. It replaces the built-in set at
-the next application start, and deleting it restores the built-in behaviour.
-
-```
-# One address or CIDR prefix per line.
-192.81.241.171
-```
-
-Every entry must sit inside a known Rockstar Online Services allocation
-(`192.81.240.0/21`, `104.255.104.0/22`, `198.133.210.0/24`, `164.153.136.0/22`,
-`2620:11b:c000::/44`). Anything else — a typo, an over-eager edit, a Zynga or
-Take-Two corporate range — is refused and the built-in set is used instead, with
-the reason printed by `--diagnose`. That guard is what makes a user-editable file
-safe for a rule created by an elevated process.
-
-`--diagnose` always reports which set is active and where it came from. Use it
-while the game is running to see which endpoints are actually in use.
-
-## Usage
-
-1. Start GTA V and enter the intended activity.
-2. Use the on-screen toggle or the configured shortcut.
-3. Confirm the VaultLoop toast and `ACTIVE` state.
-4. Complete the activity and return fully to Story Mode.
-5. Disable no-save and confirm `INACTIVE` before returning online.
-
-The default shortcut is `Ctrl+Shift+F8`. It can be changed in the application.
-
-VaultLoop starts without administrator rights. The first action that must change
-Windows Firewall triggers one UAC prompt and relaunches VaultLoop elevated for the
-rest of that session. Startup requests elevation only when a stale managed rule
-must be restored.
-
-## Build
-
-The build is driven entirely by `dotnet`; no build script is involved.
-
-```sh
-dotnet build ReplayGlitchGTA.csproj -c Release
-```
-
-The project targets .NET Framework 4.8, x64, with nullable analysis, deterministic
-release output, an embedded Per-Monitor-V2 manifest, icon, logo, and an explicit
-.NET Framework 4.8 startup check. Warnings are errors, `net48` is resolved against
-the locally installed framework (so the build works offline), and two build gates
-run automatically:
-
-- `ValidateManifest` — fails unless `app.manifest` still declares
-  `asInvoker`, `PerMonitorV2`, `longPathAware`, and the Windows 10/11
-  compatibility GUID.
-- `ValidateSingleFileOutput` — fails if a release build emits anything besides
-  `VaultLoop.exe`.
-
-To copy the validated binary to `publish\VaultLoop.exe`:
-
-```sh
+Build the current revision:
+```text
+git clone https://github.com/imnotStealthy/VaultLoop.git
+cd VaultLoop
 dotnet build ReplayGlitchGTA.csproj -c Release -t:Ship
 ```
 
-### Authenticode signing
+Published binaries are listed in [GitHub releases](https://github.com/imnotStealthy/VaultLoop/releases).
+Each binary matches its tag and may not include changes from this branch.
 
-Pass a SHA-1 certificate thumbprint to the `Ship` target; it invokes `signtool`
-from the Windows SDK:
+The `Ship` target writes `publish\VaultLoop.exe`. Before running it with
+administrator rights, copy it to a directory that `Authenticated Users` cannot modify.
 
-```sh
+To sign the shipped executable with a certificate available to `signtool`, run:
+
+```text
 dotnet build ReplayGlitchGTA.csproj -c Release -t:Ship -p:CertificateThumbprint=0123456789ABCDEF0123456789ABCDEF01234567
 ```
 
-The timestamp server defaults to `https://timestamp.digicert.com` and can be
-overridden with `-p:TimestampUrl=...`. Without a trusted code-signing certificate,
-the build remains unsigned and Windows SmartScreen may warn users. A self-signed
-certificate is not a substitute for a trusted distribution certificate.
+The timestamp server defaults to `https://timestamp.digicert.com`; override it with
+`-p:TimestampUrl=<url>`.
 
-## Validation
+## Usage
 
-The regression checks live in the application itself and are compiled into `DEBUG`
-builds only. They are read-only and run without elevation:
+### Enable and disable no-save
 
-```sh
-dotnet build ReplayGlitchGTA.csproj -c Debug -o obj/preview
-obj/preview/VaultLoop.exe --selftest
+1. Start GTA V or GTA V Enhanced and enter the intended activity.
+2. Run `VaultLoop.exe`.
+3. Select **LAUNCH AS ADMIN** and approve the Windows prompt.
+4. Enable no-save with the on-screen control, the keyboard shortcut, or a
+   configured controller shortcut.
+5. Confirm that VaultLoop displays `ACTIVE`.
+6. Complete the activity and wait until Story Mode has fully loaded.
+7. Disable no-save and confirm `INACTIVE` before returning to GTA Online.
+
+The default keyboard shortcut is `CTRL+SHIFT+F8`. Keyboard and controller
+shortcuts trigger only while a verified GTA window is in the foreground.
+
+A controller shortcut contains exactly two or three buttons. Hold the combination
+for 500 ms, then release it to toggle no-save. Xbox controllers use XInput.
+DualShock 4, DualSense, and DualSense Edge use Windows Raw Input over USB or Bluetooth.
+
+Use **HUD ON** or **HUD OFF** to control the status HUD. The HUD appears only while
+a verified GTA window is in the foreground.
+
+Minimizing VaultLoop hides it in the system tray. The tray menu controls the
+window, HUD, **START WITH WINDOWS**, and **EXIT & RESTORE**. Windows startup opens it in the tray.
+
+### Restore the firewall rule
+
+Run the restore command if the application did not close normally:
+```text
+VaultLoop.exe --restore
 ```
 
-The command prints one line per check, ends with `Result = PASS` or `FAIL`, and
-exits with code `0` or `1`. The checks are read-only: they do not enable no-save
-and never mutate Windows Firewall.
+VaultLoop also attempts restoration on normal exit, game loss, Windows shutdown,
+the watchdog path, and the next launch when it finds a stale managed rule.
 
-`DEBUG` builds also expose `--render-preview <path> [on|unknown]`, which renders
-the main window to a PNG. Comparing the SHA-256 of those PNGs before and after a
-UI change is the pixel-parity regression net. The render depends on the stored
-theme and shortcut preferences, so compare a change against a freshly built
-previous commit rather than against a stored PNG:
+### Inspect the current state
 
-```sh
-git worktree add /tmp/baseline HEAD --detach
-dotnet build /tmp/baseline/ReplayGlitchGTA.csproj -c Debug -o /tmp/baseline-out
-/tmp/baseline-out/VaultLoop.exe --render-preview /tmp/base.png
-obj/preview/VaultLoop.exe --render-preview /tmp/changed.png
-sha256sum /tmp/base.png /tmp/changed.png
-git worktree remove /tmp/baseline --force
-```
+Run:
 
-### Connection diagnostics
-
-Available in every build, without elevation, and read-only:
-
-```sh
+```text
 VaultLoop.exe --diagnose
 ```
 
-It prints the blocked set, the managed rule state, and every TCP endpoint the
-verified game process is connected to, flagging which fall inside the blocked set
-and which are Rockstar-owned but uncovered.
+The command reports the configured blocked set, the managed firewall-rule state,
+and TCP endpoints owned by the verified GTA process. It does not change the
+firewall.
 
-Exit code `2` means the rule reports `ACTIVE` while an established connection
-remains inside the blocked set. That is *expected* shortly after enabling no-save:
-a block rule does not tear down a flow that was already open. It only proves the
-block is ineffective if the reported **local port** changes between two runs,
-because the game then completed a new handshake through the active rule. The
-running application applies exactly this test and raises `BLOCK NOT EFFECTIVE`
-on its own.
+### Validate a source build
 
-## Source layout
+Run:
 
-- `Program.cs` — startup, single instance, watchdog, recovery commands.
-- `MainForm.cs` — main window chrome, layout, and firewall state orchestration.
-- `SelfTest.cs` — `--selftest` regression checks (`DEBUG` only).
-- `DiagnosticsReport.cs` — the `--diagnose` command.
-- `FirewallService.cs` — exact firewall rule state and mutation.
-- `GameProcessService.cs` — GTA process and Authenticode validation.
-- `AppSettingsStorage.cs` — atomic local preference persistence.
-- `Network\` — address prefixes, the ARIN-sourced Rockstar tables, and the
-  read-only TCP connection inspector.
-- `Ui\` — palette, typography, control factories, theme controller, dialogs.
-- `Input\` — the low-level keyboard hook.
-- `Interop\` — P/Invoke declarations, structs, and message constants.
-- `Settings\` — shortcut, theme, and guide-progress persistence.
+```text
+dotnet build ReplayGlitchGTA.csproj -c Debug -o obj/preview
+obj\preview\VaultLoop.exe --selftest
+```
+
+The self-test prints `Result = PASS` and exits with code `0` when every check
+passes. It does not enable no-save or modify Windows Firewall.
+
+## Configuration
+
+File settings are stored under `%LOCALAPPDATA%\VaultLoop`.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `shortcut.txt` | `CTRL+SHIFT+F8` | Stores the keyboard shortcut. |
+| `controller-shortcut.txt` | Disabled | Stores the controller and its exact button combination. |
+| `theme.txt` | Light | Stores `light` or `dark`. |
+| `guide-step.txt` | Step 1 | Stores the current **HOW TO USE** page. |
+| `endpoints.txt` | `192.81.241.171` | Replaces the built-in blocked set at the next launch. |
+| `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\VaultLoop` | Absent | Starts the current executable with `--startup`. |
+
+`endpoints.txt` accepts one IPv4, IPv6, or CIDR prefix per line. Lines beginning
+with `#` are comments. Every entry must be inside a configured Rockstar Online
+Services allocation. VaultLoop rejects the whole file and uses the built-in value
+when an entry is invalid or outside those allocations.
+
+| Command-line flag | Availability | Effect |
+| --- | --- | --- |
+| `--diagnose` | All builds | Prints rule, endpoint, and connection information. |
+| `--restore` | All builds | Removes the managed firewall rule. |
+| `--startup` | All builds | Starts without showing the main window. |
+| `--selftest` | Debug only | Runs read-only regression checks. |
+| `--render-preview <path> [on\|unknown]` | Debug only | Writes a PNG of the main window. |
+
+## Limitations
+
+- VaultLoop runs only on Windows x64 and its interface is English-only.
+- The managed rule applies only to a verified `GTA5.exe` or
+  `GTA5_Enhanced.exe`. Other processes and unsigned copies are rejected.
+- The built-in blocked set is the single address `192.81.241.171`. Rockstar can
+  change its services, so the current address may stop affecting saves.
+- VaultLoop validates the Windows rule. It does not prove how Rockstar services
+  or a specific GTA update will behave.
+- A firewall block does not close an existing TCP connection. Diagnostics must
+  distinguish an existing flow from a new connection created after activation.
+- A total power loss can prevent immediate cleanup. The next launch checks for a
+  stale managed rule and attempts to remove it.
+- Moving `VaultLoop.exe` after enabling **START WITH WINDOWS** leaves the stored
+  registry command pointing to the old path. Disable and re-enable the option.
+- Controllers not exposed through the supported XInput or Sony Raw Input paths
+  are not configurable.
+- Unsigned builds can trigger a Windows SmartScreen warning.
+
+## License
+
+This repository does not currently declare a software license.

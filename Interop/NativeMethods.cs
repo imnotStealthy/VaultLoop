@@ -75,9 +75,6 @@ internal static class NativeMethods
     internal static extern IntPtr CallNextHookEx(
         IntPtr hookHandle, int code, IntPtr wordParameter, IntPtr longParameter);
 
-    [DllImport("user32.dll")]
-    internal static extern short GetAsyncKeyState(int virtualKey);
-
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     internal static extern IntPtr GetModuleHandle(string? moduleName);
 

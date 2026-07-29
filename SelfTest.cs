@@ -125,6 +125,105 @@ internal static class SelfTest
             () => !ShortcutDialog.IsValidShortcut(Keys.Alt, Keys.Tab));
         checks.Verify("numeric shortcut names are user-friendly",
             () => ShortcutSettings.Format(Keys.Alt, Keys.D8) == "ALT+8");
+        checks.Verify("controller shortcuts require exactly two or three buttons", () =>
+        {
+            var twoButtons =
+                ControllerButtons.LeftShoulder | ControllerButtons.RightShoulder;
+            var threeButtons = twoButtons | ControllerButtons.West;
+            var fourButtons = threeButtons | ControllerButtons.North;
+            var dPadDiagonal =
+                ControllerButtons.DPadUp | ControllerButtons.DPadRight;
+            return !ControllerShortcut.IsValidCombination(ControllerButtons.West) &&
+                   !ControllerShortcut.IsValidCombination(dPadDiagonal) &&
+                   ControllerShortcut.IsValidCombination(twoButtons) &&
+                   ControllerShortcut.IsValidCombination(threeButtons) &&
+                   !ControllerShortcut.IsValidCombination(fourButtons);
+        });
+        checks.Verify("controller shortcut matching rejects extra gameplay buttons", () =>
+        {
+            var configured =
+                ControllerButtons.LeftShoulder | ControllerButtons.West;
+            return ControllerShortcut.IsExactCombination(configured, configured) &&
+                   !ControllerShortcut.IsExactCombination(
+                       configured | ControllerButtons.South, configured);
+        });
+        checks.Verify("shortcut toggling activates and deactivates no-save",
+            () => MainForm.GetToggledEnabledState(FirewallRuleState.Inactive) &&
+                  !MainForm.GetToggledEnabledState(FirewallRuleState.Active));
+        checks.Verify("controller shortcuts use the accepted 500 ms hold",
+            () => ControllerShortcutService.HoldMilliseconds == 500);
+        checks.Verify("controller shortcut settings round-trip without device ambiguity", () =>
+        {
+            var original = new ControllerShortcut(
+                ControllerDeviceKind.DualSense,
+                @"\\?\HID#VID_054C&PID_0CE6#VAULTLOOP_TEST",
+                ControllerButtons.LeftShoulder |
+                ControllerButtons.RightShoulder |
+                ControllerButtons.West);
+            return ControllerShortcutSettings.TryParse(
+                       ControllerShortcutSettings.Serialize(original), out var parsed) &&
+                   parsed is not null &&
+                   parsed.DeviceKind == original.DeviceKind &&
+                   parsed.DeviceId == original.DeviceId &&
+                   parsed.Buttons == original.Buttons &&
+                   parsed.Format() ==
+                       "DualSense  //  L1 + R1 + SQUARE";
+        });
+        checks.Verify("disabled controller shortcut settings stay disabled",
+            () => ControllerShortcutSettings.TryParse("disabled", out var parsed) &&
+                  parsed is null);
+        checks.Verify("Xbox button reports map to user-facing controller buttons", () =>
+        {
+            var gamepad = new XInputNativeMethods.XInputGamepad
+            {
+                Buttons = XInputNativeMethods.LeftShoulder |
+                          XInputNativeMethods.RightShoulder |
+                          XInputNativeMethods.X,
+                LeftTrigger = XInputNativeMethods.TriggerThreshold
+            };
+            return ControllerShortcutService.MapXInputButtons(gamepad) ==
+                   (ControllerButtons.LeftShoulder |
+                    ControllerButtons.RightShoulder |
+                    ControllerButtons.West |
+                    ControllerButtons.LeftTrigger);
+        });
+        checks.Verify("only supported Sony controller product ids use raw HID",
+            () => ControllerShortcutService.GetSonyDeviceKind(0x054C, 0x09CC) ==
+                      ControllerDeviceKind.DualShock4 &&
+                  ControllerShortcutService.GetSonyDeviceKind(0x054C, 0x0CE6) ==
+                      ControllerDeviceKind.DualSense &&
+                  ControllerShortcutService.GetSonyDeviceKind(0x057E, 0x2009) is null);
+        checks.Verify("raw controller input registers and unregisters cleanly", () =>
+        {
+            using var inputHost = new Form();
+            using var controllerService = new ControllerShortcutService(
+                shortcut: null, canTrigger: () => false);
+            var registered = controllerService.Install(inputHost.Handle);
+            controllerService.Uninstall();
+            return registered;
+        });
+        checks.Verify("shortcut modifiers follow low-level key events", () =>
+        {
+            var state = GlobalHotkeyHook.UpdateModifierKeyState(
+                0, Keys.LControlKey, keyDown: true, keyUp: false);
+            state = GlobalHotkeyHook.UpdateModifierKeyState(
+                state, Keys.RShiftKey, keyDown: true, keyUp: false);
+            if (GlobalHotkeyHook.GetPressedModifiers(state, 0) !=
+                (Keys.Control | Keys.Shift))
+            {
+                return false;
+            }
+
+            state = GlobalHotkeyHook.UpdateModifierKeyState(
+                state, Keys.LControlKey, keyDown: false, keyUp: true);
+            state = GlobalHotkeyHook.UpdateModifierKeyState(
+                state, Keys.RShiftKey, keyDown: false, keyUp: true);
+            state = GlobalHotkeyHook.UpdateModifierKeyState(
+                state, Keys.LMenu, keyDown: true, keyUp: false);
+            return GlobalHotkeyHook.GetPressedModifiers(state, 0) == Keys.Alt &&
+                   GlobalHotkeyHook.GetPressedModifiers(
+                       0, NativeMethods.AltDownFlag) == Keys.Alt;
+        });
 
         checks.Verify(".NET Framework 4.8 runtime check passes",
             Program.HasSupportedRuntime);
@@ -146,12 +245,60 @@ internal static class SelfTest
         checks.Verify("malformed elevated activation arguments are rejected",
             () => !Program.TryParseElevatedRequest(
                 ["--elevated", "42", "--enable"], out _, out _, out _));
+        checks.Verify("Windows startup uses the exact quoted executable and startup argument",
+            () => StartupRegistration.BuildCommand(
+                      @"C:\Program Files\VaultLoop\VaultLoop.exe") ==
+                  "\"C:\\Program Files\\VaultLoop\\VaultLoop.exe\" --startup");
+        checks.Verify("only the exact startup command requests a tray-only launch",
+            () => Program.IsStartupLaunch(["--startup"]) &&
+                  Program.IsStartupLaunch(["--STARTUP"]) &&
+                  Program.IsStartupLaunch(["--elevated", "42", "--startup"]) &&
+                  !Program.IsStartupLaunch([]) &&
+                  !Program.IsStartupLaunch(["--startup", "extra"]) &&
+                  !Program.IsStartupLaunch(["--elevated", "bad", "--startup"]));
+        checks.Verify("HUD requires its toggle and verified GTA in the foreground",
+            () => MainForm.ShouldShowHud(true, true) &&
+                  !MainForm.ShouldShowHud(false, true) &&
+                  !MainForm.ShouldShowHud(true, false));
+        checks.Verify("the tray menu exposes status, HUD, startup, window, and safe exit actions",
+            () =>
+            {
+                using var tray = new TrayMenu(
+                    () => { }, () => { }, () => { }, () => { }, () => { });
+                tray.SetStatus("ACTIVE", Palette.HotPink);
+                tray.SetHudEnabled(enabled: false);
+                tray.SetStartupEnabled(enabled: true);
+                tray.SetWindowVisible(visible: false);
+                var exitItems = tray.Items.Find("TrayExit", searchAllChildren: false);
+                return tray.StatusText == "STATUS  //  ACTIVE" &&
+                       tray.HudText == "HUD  //  OFF" &&
+                       tray.StartupText == "START WITH WINDOWS  //  ON" &&
+                       tray.OpenEnabled && !tray.HideEnabled &&
+                       exitItems.Length == 1 &&
+                       exitItems[0].Text.Replace("&&", "&") == "EXIT & RESTORE";
+            });
 
         checks.Verify("the preview window builds with the expected chrome", () =>
         {
             using var preview = new MainForm(null, previewMode: true);
-            return preview.Text == "VaultLoop" && preview.ClientSize.Width >= 780;
+            var adminButtons = preview.Controls.Find("LaunchAsAdminButton", true);
+            var hudButtons = preview.Controls.Find("HudVisibilityButton", true);
+            return preview.Text == "VaultLoop" && preview.ClientSize.Width >= 780 &&
+                   adminButtons.Length == 1 && adminButtons[0].Text == "ADMIN READY" &&
+                   hudButtons.Length == 1 && hudButtons[0].Text == "HUD ON";
         });
+        checks.Verify("the shortcut dialog exposes disabled controller configuration",
+            () =>
+            {
+                using var dialog = new ShortcutDialog(
+                    Keys.Control | Keys.Shift, Keys.F8, darkMode: true);
+                var captures = dialog.Controls.Find("ControllerShortcutCapture", true);
+                var configure = dialog.Controls.Find("ConfigureControllerShortcut", true);
+                return captures.Length == 1 &&
+                       captures[0].Text == "NOT CONFIGURED" &&
+                       configure.Length == 1 &&
+                       !configure[0].Enabled;
+            });
 
         checks.Verify("the connection inspector runs without a game process",
             () => GameConnectionInspector.GetConnections(0) is not null);

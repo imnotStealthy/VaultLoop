@@ -26,11 +26,17 @@ internal sealed partial class MainForm : Form
     private readonly Label _stateDetail;
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly bool _previewMode;
+    private readonly bool _isAdministrator;
     private readonly Image _logoImage;
     private readonly GlobalHotkeyHook _hotkeyHook;
+    private readonly ControllerShortcutService _controllerShortcutService;
+    private readonly MiniHudForm? _miniHud;
+    private NotifyIcon? _trayIcon;
+    private TrayMenu? _trayMenu;
     private readonly Button _shortcutBadge;
     private readonly Button _shortcutFooter;
     private readonly Button _themeButton;
+    private readonly Button _hudVisibilityButton;
     private readonly Label _gameStatusLabel;
     private readonly ThemeController _themeController;
     private Color _stateColor = Palette.Acid;
@@ -42,7 +48,11 @@ internal sealed partial class MainForm : Form
     private volatile bool _stateKnown = true;
 
     private bool _darkMode;
+    private bool _hudEnabled = true;
+    private bool _hasVerifiedForegroundGame;
     private bool _hotkeyRegistered;
+    private bool _controllerRawInputRegistered;
+    private bool _trayHintShown;
     private int _runtimeRefreshInProgress;
     private int _runtimeRefreshVersion;
     private FirewallRuleState _firewallState = FirewallRuleState.Inactive;
@@ -57,11 +67,17 @@ internal sealed partial class MainForm : Form
     {
         _firewall = firewall;
         _previewMode = previewMode;
+        _isAdministrator = _previewMode || Program.IsRunningAsAdministrator();
         _logoImage = LoadLogo();
         var shortcut = ShortcutSettings.Load();
         _hotkeyHook = new GlobalHotkeyHook(
-            shortcut.Modifiers, shortcut.Key, () => !_applying && _stateKnown);
+            shortcut.Modifiers, shortcut.Key,
+            () => _isAdministrator && !_applying && _stateKnown);
         _hotkeyHook.Pressed += HandleHotkeyPressed;
+        _controllerShortcutService = new ControllerShortcutService(
+            ControllerShortcutSettings.Load(),
+            () => _isAdministrator && !_applying && _stateKnown);
+        _controllerShortcutService.Pressed += HandleHotkeyPressed;
         _darkMode = ThemeSettings.Load();
 
         var chrome = BuildLayout();
@@ -72,7 +88,13 @@ internal sealed partial class MainForm : Form
         _stateTitle = chrome.StateTitle;
         _stateDetail = chrome.StateDetail;
         _shortcutFooter = chrome.ShortcutFooter;
+        _hudVisibilityButton = chrome.HudVisibilityButton;
         _gameStatusLabel = chrome.GameStatusLabel;
+        _miniHud = _previewMode ? null : new MiniHudForm();
+        if (!_previewMode)
+        {
+            InitializeTray();
+        }
 
         _refreshTimer = new System.Windows.Forms.Timer
         {
@@ -81,6 +103,13 @@ internal sealed partial class MainForm : Form
         _refreshTimer.Tick += (_, _) => QueueRuntimeRefresh();
         FormClosing += HandleClosing;
         Shown += HandleShown;
+        Resize += (_, _) =>
+        {
+            if (!_previewMode && WindowState == FormWindowState.Minimized)
+            {
+                HideToTray();
+            }
+        };
         _themeController = new ThemeController(
             this, _themeButton, [_stateKicker, _stateTitle, _stateDetail, _toggle]);
         _themeController.CaptureThemeColors();
@@ -110,6 +139,8 @@ internal sealed partial class MainForm : Form
         if (!_previewMode)
         {
             _hotkeyRegistered = _hotkeyHook.Install();
+            _controllerRawInputRegistered =
+                _controllerShortcutService.Install(Handle);
         }
     }
 
@@ -117,8 +148,10 @@ internal sealed partial class MainForm : Form
     {
         if (!_previewMode)
         {
+            _controllerShortcutService.Uninstall();
             _hotkeyHook.Uninstall();
             _hotkeyRegistered = false;
+            _controllerRawInputRegistered = false;
         }
         base.OnHandleDestroyed(e);
     }
@@ -128,12 +161,37 @@ internal sealed partial class MainForm : Form
         if (disposing)
         {
             _refreshTimer.Dispose();
+            _miniHud?.Dispose();
+            if (_trayIcon is not null)
+            {
+                _trayIcon.Visible = false;
+                _trayIcon.Dispose();
+            }
+            _trayMenu?.Dispose();
         }
         base.Dispose(disposing);
         if (disposing)
         {
+            _controllerShortcutService.Dispose();
             _logoImage.Dispose();
         }
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (!_previewMode)
+        {
+            if (message.Msg == RawInputNativeMethods.InputMessage)
+            {
+                _controllerShortcutService.ProcessRawInput(message.LParam);
+            }
+            else if (message.Msg == RawInputNativeMethods.InputDeviceChangeMessage)
+            {
+                _controllerShortcutService.ProcessRawInputDeviceChange(
+                    message.LParam, message.WParam.ToInt32());
+            }
+        }
+        base.WndProc(ref message);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -160,12 +218,24 @@ internal sealed partial class MainForm : Form
 
     private void HandleShown(object? sender, EventArgs eventArgs)
     {
+        _trayMenu?.SetWindowVisible(visible: true);
+        UpdateHudVisibility();
         if (!_previewMode && !_hotkeyRegistered)
         {
             MessageBox.Show(this,
                 $"The {ShortcutText} keyboard hook could not be installed.\n" +
                 "The on-screen toggle remains available.",
                 "Shortcut unavailable", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        if (!_previewMode && !_controllerRawInputRegistered &&
+            _controllerShortcutService.Shortcut?.DeviceKind is
+                ControllerDeviceKind.DualShock4 or ControllerDeviceKind.DualSense)
+        {
+            MessageBox.Show(this,
+                "PlayStation controller input could not be registered.\n" +
+                "The keyboard and Xbox shortcuts remain available.",
+                "Controller shortcut unavailable",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -193,6 +263,7 @@ internal sealed partial class MainForm : Form
 
         var version = Interlocked.Increment(ref _runtimeRefreshVersion);
         _hotkeyHook.Disarm();
+        _controllerShortcutService.Suspend();
         ThreadPool.QueueUserWorkItem(_ =>
         {
             try
@@ -405,15 +476,19 @@ internal sealed partial class MainForm : Form
     private void ApplyGameContext(
         string? foregroundPath, IntPtr foregroundWindow, string? runningPath)
     {
+        _hasVerifiedForegroundGame = foregroundPath is not null;
+        UpdateHudVisibility();
         if (foregroundPath is not null)
         {
             _verifiedGamePath = foregroundPath;
             _hotkeyHook.Arm(foregroundWindow);
+            _controllerShortcutService.Arm(foregroundWindow);
             SetGameStatus("GTA READY  //  SAFE RESTORE", Palette.Acid);
             return;
         }
 
         _hotkeyHook.Disarm();
+        _controllerShortcutService.Disarm();
         _verifiedGamePath = runningPath;
         SetGameStatus(
             runningPath is null ? "WAITING FOR GTA" : "GTA IN BACKGROUND", Palette.Yellow);
@@ -441,7 +516,8 @@ internal sealed partial class MainForm : Form
         {
             var shortcut = _hotkeyHook.Shortcut;
             using var dialog = new ShortcutDialog(
-                shortcut.Modifiers, shortcut.Key, _darkMode);
+                shortcut.Modifiers, shortcut.Key, _darkMode,
+                _controllerShortcutService, _controllerShortcutService.Shortcut);
             if (dialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
@@ -450,7 +526,9 @@ internal sealed partial class MainForm : Form
             var newModifiers = dialog.ShortcutModifiers;
             var newKey = dialog.ShortcutKey;
             ShortcutSettings.Save(newModifiers, newKey);
+            ControllerShortcutSettings.Save(dialog.ControllerShortcut);
             _hotkeyHook.Shortcut = (newModifiers, newKey);
+            _controllerShortcutService.Shortcut = dialog.ControllerShortcut;
             _shortcutBadge.Text = ShortcutText;
             _shortcutFooter.Text = $"{ShortcutText}  //  GTA ONLY";
         }
@@ -461,8 +539,172 @@ internal sealed partial class MainForm : Form
         }
         finally
         {
+            _controllerShortcutService.CancelCapture();
             _hotkeyHook.CapturingShortcut = false;
         }
+    }
+
+    private void LaunchAsAdministrator()
+    {
+        if (_isAdministrator)
+        {
+            return;
+        }
+
+        try
+        {
+            Program.RelaunchElevated(null, IntPtr.Zero);
+            Close();
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this,
+                $"VaultLoop could not be launched as administrator:\n{exception.Message}",
+                "Administrator launch failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void ToggleHudVisibility()
+    {
+        _hudEnabled = !_hudEnabled;
+        _hudVisibilityButton.Text = _hudEnabled ? "HUD ON" : "HUD OFF";
+        _hudVisibilityButton.AccessibleName =
+            _hudEnabled ? "Hide the no-save HUD" : "Show the no-save HUD";
+        _trayMenu?.SetHudEnabled(_hudEnabled);
+        UpdateHudVisibility();
+    }
+
+    private void UpdateHudVisibility()
+    {
+        if (_miniHud is null)
+        {
+            return;
+        }
+
+        if (ShouldShowHud(_hudEnabled, _hasVerifiedForegroundGame))
+        {
+            if (!_miniHud.Visible)
+            {
+                _miniHud.ShowOnActiveScreen();
+            }
+        }
+        else if (_miniHud.Visible)
+        {
+            _miniHud.Hide();
+        }
+    }
+
+    internal static bool ShouldShowHud(
+        bool hudEnabled, bool hasVerifiedForegroundGame) =>
+        hudEnabled && hasVerifiedForegroundGame;
+
+    internal void StartInTray()
+    {
+        if (_previewMode)
+        {
+            return;
+        }
+
+        ShowInTaskbar = false;
+        _ = Handle;
+        _trayMenu?.SetWindowVisible(visible: false);
+        UpdateHudVisibility();
+    }
+
+    private void InitializeTray()
+    {
+        _trayMenu = new TrayMenu(
+            ShowFromTray, HideToTray, ToggleHudVisibility,
+            ToggleStartWithWindows, ExitFromTray);
+        _trayMenu.SetHudEnabled(_hudEnabled);
+        _trayMenu.SetStartupEnabled(
+            StartupRegistration.IsEnabled(Application.ExecutablePath));
+        _trayMenu.SetWindowVisible(visible: false);
+
+        _trayIcon = new NotifyIcon
+        {
+            Icon = Icon ?? SystemIcons.Application,
+            Text = "VaultLoop - No-save starting",
+            ContextMenuStrip = _trayMenu,
+            Visible = true,
+            BalloonTipTitle = "VaultLoop",
+            BalloonTipText = "VaultLoop is still running in the system tray.",
+            BalloonTipIcon = ToolTipIcon.Info
+        };
+        _trayIcon.MouseDoubleClick += (_, eventArgs) =>
+        {
+            if (eventArgs.Button == MouseButtons.Left)
+            {
+                ShowFromTray();
+            }
+        };
+    }
+
+    private void ToggleStartWithWindows()
+    {
+        try
+        {
+            var enable = !StartupRegistration.IsEnabled(Application.ExecutablePath);
+            StartupRegistration.SetEnabled(Application.ExecutablePath, enable);
+            _trayMenu?.SetStartupEnabled(enable);
+        }
+        catch (Exception exception)
+        {
+            ShowFromTray();
+            MessageBox.Show(this,
+                $"Start with Windows could not be updated:\n{exception.Message}",
+                "Startup setting", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void MinimizeToTray()
+    {
+        if (_previewMode)
+        {
+            WindowState = FormWindowState.Minimized;
+            return;
+        }
+        HideToTray();
+    }
+
+    private void HideToTray()
+    {
+        if (!Visible)
+        {
+            return;
+        }
+
+        ShowInTaskbar = false;
+        Hide();
+        _trayMenu?.SetWindowVisible(visible: false);
+        UpdateHudVisibility();
+        if (!_trayHintShown && _trayIcon is not null)
+        {
+            _trayHintShown = true;
+            _trayIcon.ShowBalloonTip(1600);
+        }
+    }
+
+    private void ShowFromTray()
+    {
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        ShowInTaskbar = true;
+        WindowState = FormWindowState.Normal;
+        Show();
+        Activate();
+        BringToFront();
+        _trayMenu?.SetWindowVisible(visible: true);
+        UpdateHudVisibility();
+    }
+
+    private void ExitFromTray()
+    {
+        ShowFromTray();
+        Close();
     }
 
     private void ToggleTheme()
@@ -487,8 +729,11 @@ internal sealed partial class MainForm : Form
         {
             return;
         }
-        ApplyState(_firewallState == FirewallRuleState.Inactive, fromHotkey);
+        ApplyState(GetToggledEnabledState(_firewallState), fromHotkey);
     }
+
+    internal static bool GetToggledEnabledState(FirewallRuleState currentState) =>
+        currentState == FirewallRuleState.Inactive;
 
     private void ApplyState(bool enabled, bool fromHotkey = false)
     {
@@ -530,6 +775,7 @@ internal sealed partial class MainForm : Form
                 requestedForegroundWindow = liveForegroundWindow;
                 _verifiedGamePath = foregroundPath;
                 _hotkeyHook.Arm(liveForegroundWindow);
+                _controllerShortcutService.Arm(liveForegroundWindow);
             }
             else if (GameProcessService.TryFindVerifiedRunningGame(out var runningPath))
             {
@@ -587,7 +833,7 @@ internal sealed partial class MainForm : Form
         finally
         {
             UseWaitCursor = false;
-            _toggle.Enabled = _stateKnown;
+            _toggle.Enabled = _isAdministrator && _stateKnown;
             _applying = false;
         }
     }
@@ -643,7 +889,8 @@ internal sealed partial class MainForm : Form
         _toggle.IsRecoveryMode = false;
         _toggle.IsStateKnown = true;
         _toggle.Checked = enabled;
-        _toggle.Enabled = !_applying;
+        _toggle.Enabled = _isAdministrator && !_applying;
+        _miniHud?.SetState(enabled);
         RenderStatus(
             enabled ? Palette.HotPink : Palette.Acid,
             enabled ? "ACTIVE" : "INACTIVE",
@@ -657,7 +904,8 @@ internal sealed partial class MainForm : Form
         _firewallState = FirewallRuleState.Invalid;
         _toggle.IsStateKnown = false;
         _toggle.IsRecoveryMode = true;
-        _toggle.Enabled = !_applying;
+        _toggle.Enabled = _isAdministrator && !_applying;
+        _miniHud?.SetState(null);
         RenderStatus(Palette.Yellow, "INVALID", "CLICK RESTORE, THEN RETRY",
             "Restore an invalid VaultLoop firewall rule");
     }
@@ -669,6 +917,7 @@ internal sealed partial class MainForm : Form
         _toggle.IsRecoveryMode = false;
         _toggle.IsStateKnown = false;
         _toggle.Enabled = false;
+        _miniHud?.SetState(null);
         RenderStatus(Palette.Yellow, "UNKNOWN", "FIREWALL STATE UNAVAILABLE",
             "No-save state unknown");
     }
@@ -684,6 +933,11 @@ internal sealed partial class MainForm : Form
         _stateTitle.Text = title;
         _stateDetail.Text = detail;
         _toggle.AccessibleName = toggleAccessibleName;
+        _trayMenu?.SetStatus(title, color);
+        if (_trayIcon is not null)
+        {
+            _trayIcon.Text = $"VaultLoop - No-save {title.ToLowerInvariant()}";
+        }
         Invalidate();
     }
 
@@ -766,6 +1020,67 @@ internal sealed partial class MainForm : Form
         internal HashSet<int>? BlockedLocalPorts { get; set; }
 
         internal bool HasVerifiedGame => ForegroundPath is not null || RunningPath is not null;
+    }
+
+    private sealed class MiniHudForm : Form
+    {
+        private readonly Label _statusLabel;
+
+        internal MiniHudForm()
+        {
+            ClientSize = new Size(260, 52);
+            BackColor = Color.Black;
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            TopMost = true;
+            AutoScaleMode = AutoScaleMode.Dpi;
+            AccessibleName = "VaultLoop no-save status";
+
+            _statusLabel = new Label
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.Black,
+                ForeColor = Color.White,
+                Font = Typography.DialogTitleBar,
+                Text = "No-save Disabled",
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            Controls.Add(_statusLabel);
+        }
+
+        internal void ShowOnActiveScreen()
+        {
+            var workingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+            Location = new Point(workingArea.Right - Width - 24, workingArea.Top + 24);
+            Show();
+        }
+
+        internal void SetState(bool? enabled)
+        {
+            _statusLabel.Text = enabled switch
+            {
+                true => "No-save Enabled",
+                false => "No-save Disabled",
+                null => "No-save Unknown"
+            };
+            AccessibleName = _statusLabel.Text;
+        }
+
+        protected override bool ShowWithoutActivation => true;
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                const int ToolWindow = 0x00000080;
+                const int Transparent = 0x00000020;
+                const int NoActivate = 0x08000000;
+                var parameters = base.CreateParams;
+                parameters.ExStyle |= ToolWindow | Transparent | NoActivate;
+                return parameters;
+            }
+        }
     }
 
 }

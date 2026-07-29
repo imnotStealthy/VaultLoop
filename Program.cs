@@ -24,6 +24,7 @@ internal static class Program
         // First statement in the process: every later P/Invoke must resolve from System32.
         NativeMethods.RestrictDllSearchPathToSystem32();
 
+        var startupLaunch = IsStartupLaunch(arguments);
         var elevatedRequest = TryParseElevatedRequest(arguments, out var parentProcessId,
             out var requestedGamePath, out var requestedForegroundWindow);
         if (elevatedRequest)
@@ -98,14 +99,17 @@ internal static class Program
         using var singleInstance = new Mutex(true, @"Global\ReplayGlitchGTA.NoSave", out var ownsMutex);
         if (!ownsMutex)
         {
-            MessageBox.Show("The application is already running.", "VaultLoop",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (!startupLaunch)
+            {
+                MessageBox.Show("The application is already running.", "VaultLoop",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
             return;
         }
 
         var firewall = new FirewallService();
         var startupOutcome = PrepareFirewall(
-            firewall, requestedGamePath, requestedForegroundWindow);
+            firewall, requestedGamePath, requestedForegroundWindow, startupLaunch);
         if (startupOutcome == StartupOutcome.HandedOverToElevatedProcess)
         {
             singleInstance.ReleaseMutex();
@@ -124,7 +128,19 @@ internal static class Program
                     "VaultLoop restored a firewall rule left by a previous interrupted session.",
                     "Previous session recovered", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
-            Application.Run(new MainForm(firewall));
+
+            using var mainForm = new MainForm(firewall);
+            using var applicationContext = new ApplicationContext();
+            mainForm.FormClosed += (_, _) => applicationContext.ExitThread();
+            if (startupLaunch)
+            {
+                mainForm.StartInTray();
+            }
+            else
+            {
+                mainForm.Show();
+            }
+            Application.Run(applicationContext);
         }
         finally
         {
@@ -147,6 +163,13 @@ internal static class Program
         arguments.Length >= 1 &&
         arguments[0].Equals(name, StringComparison.OrdinalIgnoreCase);
 
+    internal static bool IsStartupLaunch(string[] arguments) =>
+        arguments.Length == 1 && IsCommand(arguments, "--startup") ||
+        arguments.Length >= 3 &&
+        arguments[arguments.Length - 1].Equals(
+            "--startup", StringComparison.OrdinalIgnoreCase) &&
+        TryParseElevatedRequest(arguments, out _, out _, out _);
+
     /// <summary>
     /// Brings the firewall to a known state before the window opens: a rule surviving a
     /// previous session is removed, and an activation requested by an elevation relaunch is
@@ -154,7 +177,8 @@ internal static class Program
     /// the elevated instance, which this one then hands over to.
     /// </summary>
     private static StartupOutcome PrepareFirewall(
-        FirewallService firewall, string? requestedGamePath, IntPtr requestedForegroundWindow)
+        FirewallService firewall, string? requestedGamePath, IntPtr requestedForegroundWindow,
+        bool startupLaunch)
     {
         var outcome = StartupOutcome.Ready;
         try
@@ -165,7 +189,7 @@ internal static class Program
                 {
                     try
                     {
-                        RelaunchElevated(null, IntPtr.Zero);
+                        RelaunchElevated(null, IntPtr.Zero, startupLaunch);
                     }
                     catch (Exception exception)
                     {
@@ -207,14 +231,16 @@ internal static class Program
         HandedOverToElevatedProcess
     }
 
-    internal static void RelaunchElevated(string? gamePath, IntPtr foregroundWindow)
+    internal static void RelaunchElevated(
+        string? gamePath, IntPtr foregroundWindow, bool startupLaunch = false)
     {
         StartElevated(BuildElevatedArguments(
-            Process.GetCurrentProcess().Id, gamePath, foregroundWindow));
+            Process.GetCurrentProcess().Id, gamePath, foregroundWindow, startupLaunch));
     }
 
     internal static string BuildElevatedArguments(
-        int parentProcessId, string? gamePath, IntPtr foregroundWindow)
+        int parentProcessId, string? gamePath, IntPtr foregroundWindow,
+        bool startupLaunch = false)
     {
         var arguments = $"--elevated {parentProcessId}";
         if (gamePath is not null)
@@ -225,7 +251,7 @@ internal static class Program
                 arguments += $" --foreground-window {foregroundWindow.ToInt64()}";
             }
         }
-        return arguments;
+        return startupLaunch ? $"{arguments} --startup" : arguments;
     }
 
     internal static bool IsRunningAsAdministrator()
@@ -252,14 +278,21 @@ internal static class Program
         parentProcessId = 0;
         gamePath = null;
         foregroundWindow = IntPtr.Zero;
-        if (arguments.Length is not (2 or 4 or 6) ||
+        var argumentCount = arguments.Length;
+        if (argumentCount >= 3 &&
+            arguments[argumentCount - 1].Equals(
+                "--startup", StringComparison.OrdinalIgnoreCase))
+        {
+            argumentCount--;
+        }
+        if (argumentCount is not (2 or 4 or 6) ||
             !arguments[0].Equals("--elevated", StringComparison.OrdinalIgnoreCase) ||
             !int.TryParse(arguments[1], out parentProcessId))
         {
             return false;
         }
 
-        if (arguments.Length >= 4)
+        if (argumentCount >= 4)
         {
             if (!arguments[2].Equals("--enable", StringComparison.OrdinalIgnoreCase) ||
                 string.IsNullOrWhiteSpace(arguments[3]))
@@ -268,7 +301,7 @@ internal static class Program
             }
             gamePath = arguments[3];
         }
-        if (arguments.Length >= 6)
+        if (argumentCount >= 6)
         {
             if (!arguments[4].Equals(
                     "--foreground-window", StringComparison.OrdinalIgnoreCase) ||
