@@ -20,6 +20,7 @@ internal sealed class ControllerShortcutService : IDisposable
 
     private readonly object _sync = new();
     private readonly Func<bool> _canTrigger;
+    private readonly ShortcutTriggerGate _triggerGate = new();
     private readonly Timer _pollTimer;
     private readonly Dictionary<string, DeviceState> _devices =
         new(StringComparer.OrdinalIgnoreCase);
@@ -40,8 +41,6 @@ internal sealed class ControllerShortcutService : IDisposable
     private bool _rawInputRegistered;
     private bool _xinputAvailable = true;
     private int _polling;
-    private volatile bool _gameHotkeyReady;
-    private long _verifiedGameWindow;
     private bool _disposed;
 
     internal ControllerShortcutService(
@@ -137,14 +136,12 @@ internal sealed class ControllerShortcutService : IDisposable
 
     internal void Arm(IntPtr verifiedGameWindow)
     {
-        Volatile.Write(ref _verifiedGameWindow, verifiedGameWindow.ToInt64());
-        _gameHotkeyReady = verifiedGameWindow != IntPtr.Zero;
+        _triggerGate.Arm(verifiedGameWindow);
     }
 
     internal void Suspend()
     {
-        _gameHotkeyReady = false;
-        Volatile.Write(ref _verifiedGameWindow, 0);
+        _triggerGate.Disarm();
     }
 
     internal void Disarm()
@@ -547,13 +544,7 @@ internal sealed class ControllerShortcutService : IDisposable
             return false;
         }
 
-        var verifiedWindow = new IntPtr(Volatile.Read(ref _verifiedGameWindow));
-        if (!_gameHotkeyReady || verifiedWindow == IntPtr.Zero)
-        {
-            return false;
-        }
-        if (!_canTrigger() ||
-            !GameProcessService.IsCurrentForegroundWindow(verifiedWindow))
+        if (!_triggerGate.CanFire(_canTrigger))
         {
             _runtimeHoldStarted = timestamp;
             return false;

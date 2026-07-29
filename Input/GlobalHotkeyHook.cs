@@ -1,6 +1,5 @@
 using System;
 using System.Runtime.InteropServices;
-using System.Threading;
 using System.Windows.Forms;
 
 namespace ReplayGlitchGTA;
@@ -19,13 +18,12 @@ internal sealed class GlobalHotkeyHook
 
     private readonly Func<bool> _canTrigger;
     private readonly NativeMethods.LowLevelKeyboardProcedure _keyboardProcedure;
+    private readonly ShortcutTriggerGate _triggerGate = new();
     private Keys _shortcutKey;
     private Keys _shortcutModifiers;
     private volatile bool _capturingShortcut;
     private volatile bool _shortcutDown;
-    private bool _gameHotkeyReady;
     private IntPtr _keyboardHook;
-    private long _verifiedGameWindow;
     private volatile int _modifierKeyState;
 
     internal GlobalHotkeyHook(Keys modifiers, Keys key, Func<bool> canTrigger)
@@ -39,7 +37,7 @@ internal sealed class GlobalHotkeyHook
     internal event EventHandler? Pressed;
     internal event EventHandler? Released;
 
-    internal bool Armed => Volatile.Read(ref _gameHotkeyReady);
+    internal bool Armed => _triggerGate.Armed;
 
     internal bool CapturingShortcut
     {
@@ -84,14 +82,12 @@ internal sealed class GlobalHotkeyHook
 
     internal void Arm(IntPtr verifiedGameWindow)
     {
-        Interlocked.Exchange(ref _verifiedGameWindow, verifiedGameWindow.ToInt64());
-        Volatile.Write(ref _gameHotkeyReady, true);
+        _triggerGate.Arm(verifiedGameWindow);
     }
 
     internal void Disarm()
     {
-        Volatile.Write(ref _gameHotkeyReady, false);
-        Interlocked.Exchange(ref _verifiedGameWindow, 0);
+        _triggerGate.Disarm();
     }
 
     private IntPtr KeyboardHookCallback(
@@ -122,11 +118,7 @@ internal sealed class GlobalHotkeyHook
                 var modifiersMatch = pressedModifiers == _shortcutModifiers;
 
                 var canTrigger = keyDown && modifiersMatch &&
-                                 Volatile.Read(ref _gameHotkeyReady) &&
-                                 GameProcessService.IsCurrentForegroundWindow(
-                                     new IntPtr(
-                                         Interlocked.Read(ref _verifiedGameWindow))) &&
-                                 _canTrigger();
+                                 _triggerGate.CanFire(_canTrigger);
                 if (canTrigger || (keyUp && _shortcutDown))
                 {
                     if (keyDown && !_shortcutDown)

@@ -41,6 +41,30 @@ internal static class SelfTest
             () => !GameProcessService.IsSupportedProcessName("NVIDIA Share"));
         checks.Verify("an empty foreground handle never arms the shortcut",
             () => !GameProcessService.IsCurrentForegroundWindow(IntPtr.Zero));
+        checks.Verify("shortcut trigger gate rejects every disarmed state", () =>
+        {
+            var canTriggerCalls = 0;
+            Func<bool> canTrigger = () =>
+            {
+                canTriggerCalls++;
+                return true;
+            };
+            var gate = new ShortcutTriggerGate();
+            if (gate.Armed || gate.CanFire(canTrigger))
+            {
+                return false;
+            }
+
+            gate.Arm(IntPtr.Zero);
+            if (gate.Armed || gate.CanFire(canTrigger))
+            {
+                return false;
+            }
+
+            gate.Arm(new IntPtr(1));
+            gate.Disarm();
+            return !gate.Armed && !gate.CanFire(canTrigger) && canTriggerCalls == 0;
+        });
 
         // Properties of whatever set is active, so editing endpoints.txt cannot turn the
         // suite red on a legitimate configuration.
