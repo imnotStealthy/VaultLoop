@@ -220,6 +220,19 @@ internal sealed partial class MainForm : Form
                 "Controller shortcut unavailable",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+        // A rejected endpoints.txt used to fall back to the built-in set in silence: the rule
+        // then blocked something other than what the file asked for, with nothing on screen to
+        // say so. The reason was only reachable through --diagnose.
+        if (!_previewMode &&
+            RockstarNetworks.BlockedConfigurationError is { } configurationError)
+        {
+            MessageBox.Show(this,
+                $"{configurationError}\n\n" +
+                "Correct the file in %LOCALAPPDATA%\\VaultLoop and restart VaultLoop, " +
+                "or delete it to keep the built-in address set.",
+                "Endpoint configuration ignored",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void HandleHotkeyPressed(object? sender, EventArgs eventArgs)
