@@ -1,0 +1,48 @@
+name: build
+
+# Runs the gates the working brief describes as mandatory: a warning-free release
+# build, which also proves the manifest and single-file targets passed, and the
+# self-test from a debug build. Steps use cmd, not PowerShell, because the project
+# keeps PowerShell out of its tooling.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build release
+        shell: cmd
+        run: dotnet build ReplayGlitchGTA.csproj -c Release
+
+      - name: Build debug
+        shell: cmd
+        run: dotnet build ReplayGlitchGTA.csproj -c Debug -o obj/preview
+
+      # VaultLoop is a WinExe, so cmd does not wait for it on its own.
+      - name: Self-test
+        shell: cmd
+        run: |
+          start /wait /b obj\preview\VaultLoop.exe --selftest
+          if errorlevel 1 exit /b 1
+
+      - name: Ship
+        shell: cmd
+        run: dotnet build ReplayGlitchGTA.csproj -c Release -t:Ship
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VaultLoop
+          path: publish/VaultLoop.exe
+          if-no-files-found: error

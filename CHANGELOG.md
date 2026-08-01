@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- Fixed DualShock 4 and DualSense shortcuts, which never worked: the
+  `RID_DEVICE_INFO` structure was declared 24 bytes instead of 32, so Windows
+  refused every device query and no PlayStation controller was ever identified.
+- Fixed keyboard and controller shortcuts being disarmed for the duration of
+  every runtime refresh, which silently swallowed a keystroke made in that
+  window.
+- Moved firewall changes off the UI thread. Confirming a rule could block the
+  message loop for about two seconds, during which the window froze and
+  controller input was not pumped.
+- Raised the Authenticode cache lifetime to the documented 300 seconds. The game
+  executable was re-hashed every 30 seconds during play.
+- Controllers are polled only while a shortcut is configured or a capture is
+  running, instead of continuously.
+- Fixed the **HOW TO USE** window placing its close button out of reach on a
+  display shorter than 700 logical pixels, and made Escape close it.
+- A rejected `endpoints.txt` is now reported in the window instead of falling
+  back to the built-in address set in silence.
+- Added a local activity log under `%LOCALAPPDATA%\VaultLoop`.
+- Added the MIT license, a continuous integration workflow, and recorded the
+  minimum Windows and .NET SDK versions in the README.
+
+Note: releases 1.2.2 to 1.2.4 have no entry here. Whether they were published is
+not recorded in this repository.
+
 ## 1.2.5
 
 - Added optional controller shortcuts for Xbox, DualShock 4, DualSense, and
