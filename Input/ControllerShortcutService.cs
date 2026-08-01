@@ -70,6 +70,7 @@ internal sealed class ControllerShortcutService : IDisposable
                 _shortcut = value;
                 ResetRuntimeState();
             }
+            UpdatePollTimer();
         }
     }
 
@@ -104,8 +105,27 @@ internal sealed class ControllerShortcutService : IDisposable
             _installed = true;
             _rawInputRegistered = rawInputRegistered;
         }
-        _pollTimer.Change(0, PollIntervalMilliseconds);
+        UpdatePollTimer();
         return rawInputRegistered;
+    }
+
+    /// <summary>
+    /// Starts or stops the poll timer. Polling has something to decide only while a capture is
+    /// running or a shortcut is configured. Outside those two cases the timer used to keep
+    /// waking the machine 33 times a second and sweeping four XInput slots for nothing —
+    /// measured at 256 us per sweep, 0.85 % of one core, for a feature that is disabled by
+    /// default.
+    /// </summary>
+    private void UpdatePollTimer()
+    {
+        bool pollingNeeded;
+        lock (_sync)
+        {
+            pollingNeeded = _installed && (_capturing || _shortcut is not null);
+        }
+        _pollTimer.Change(
+            pollingNeeded ? 0 : Timeout.Infinite,
+            pollingNeeded ? PollIntervalMilliseconds : Timeout.Infinite);
     }
 
     internal void Uninstall()
@@ -168,6 +188,7 @@ internal sealed class ControllerShortcutService : IDisposable
                 null, complete: false);
             ResetRuntimeState();
         }
+        UpdatePollTimer();
     }
 
     internal void CancelCapture()
@@ -180,6 +201,7 @@ internal sealed class ControllerShortcutService : IDisposable
             _captureHoldStarted = 0;
             _captureAwaitingRelease = false;
         }
+        UpdatePollTimer();
     }
 
     internal void ProcessRawInput(IntPtr rawInputHandle)
@@ -271,6 +293,7 @@ internal sealed class ControllerShortcutService : IDisposable
             }
         }
         removed?.Dispose();
+        UpdatePollTimer();
     }
 
     internal static ControllerButtons MapXInputButtons(
@@ -352,8 +375,26 @@ internal sealed class ControllerShortcutService : IDisposable
 
         try
         {
-            PollXInput();
+            // XInput is swept only when an Xbox device can actually take part: during capture,
+            // or for a configured XInput shortcut. A DualShock or DualSense shortcut is fed by
+            // raw input messages instead and needs no sweep at all.
+            bool pollXInput;
+            lock (_sync)
+            {
+                if (!_installed)
+                {
+                    return;
+                }
+                pollXInput = _capturing ||
+                             _shortcut?.DeviceKind == ControllerDeviceKind.XInput;
+            }
+            if (pollXInput)
+            {
+                PollXInput();
+            }
+
             bool raisePressed;
+            bool keepPolling;
             lock (_sync)
             {
                 if (!_installed)
@@ -364,6 +405,11 @@ internal sealed class ControllerShortcutService : IDisposable
                 raisePressed = _capturing
                     ? EvaluateCapture(timestamp)
                     : EvaluateRuntime(timestamp);
+                keepPolling = _capturing || _shortcut is not null;
+            }
+            if (!keepPolling)
+            {
+                _pollTimer.Change(Timeout.Infinite, Timeout.Infinite);
             }
             if (raisePressed)
             {
