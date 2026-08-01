@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 
@@ -217,6 +218,11 @@ internal static class SelfTest
                   ControllerShortcutService.GetSonyDeviceKind(0x054C, 0x0CE6) ==
                       ControllerDeviceKind.DualSense &&
                   ControllerShortcutService.GetSonyDeviceKind(0x057E, 0x2009) is null);
+        // GetRawInputDeviceInfoW rejects the query outright when cbSize disagrees with the
+        // size Windows expects, which silently disabled every PlayStation controller.
+        checks.Verify("the raw input device info structure matches the Windows layout",
+            () => Marshal.SizeOf(typeof(RawInputNativeMethods.RawInputDeviceInfo)) == 32 &&
+                  Marshal.SizeOf(typeof(RawInputNativeMethods.RawInputDeviceInfoUnion)) == 24);
         checks.Verify("raw controller input registers and unregisters cleanly", () =>
         {
             using var inputHost = new Form();
