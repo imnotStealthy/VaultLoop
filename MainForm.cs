@@ -224,9 +224,20 @@ internal sealed partial class MainForm : Form
 
     private void HandleHotkeyPressed(object? sender, EventArgs eventArgs)
     {
-        if (!IsDisposed && IsHandleCreated)
+        if (IsDisposed || !IsHandleCreated)
+        {
+            return;
+        }
+
+        try
         {
             BeginInvoke(new Action(() => ToggleState(fromHotkey: true)));
+        }
+        catch (InvalidOperationException)
+        {
+            // The window closed between the handle check and BeginInvoke. The controller
+            // poll timer does not wait for its callback to finish, so this event can be
+            // raised while the window is being torn down.
         }
     }
 

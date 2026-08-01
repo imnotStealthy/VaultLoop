@@ -29,9 +29,14 @@ internal sealed partial class MainForm
             return;
         }
 
+        // The shortcuts are deliberately left as they are while the snapshot is read.
+        // Disarming here and re-arming from ApplyGameContext opened a dead window on every
+        // tick — and an unbounded one whenever the snapshot was discarded — during which a
+        // legitimate keystroke was silently swallowed. Neither guard required by the security
+        // model is weakened: ApplyGameContext still disarms as soon as the verified game stops
+        // being in the foreground, and ShortcutTriggerGate.CanFire still re-checks the live
+        // foreground window before every trigger.
         var version = Interlocked.Increment(ref _runtimeRefreshVersion);
-        _hotkeyHook.Disarm();
-        _controllerShortcutService.Suspend();
         ThreadPool.QueueUserWorkItem(_ =>
         {
             try
