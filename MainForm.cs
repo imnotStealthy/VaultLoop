@@ -205,6 +205,7 @@ internal sealed partial class MainForm : Form
         UpdateHudVisibility();
         if (!_previewMode && !_hotkeyRegistered)
         {
+            ActivityLog.Write($"the {ShortcutText} keyboard hook could not be installed");
             MessageBox.Show(this,
                 $"The {ShortcutText} keyboard hook could not be installed.\n" +
                 "The on-screen toggle remains available.",
@@ -226,6 +227,7 @@ internal sealed partial class MainForm : Form
         if (!_previewMode &&
             RockstarNetworks.BlockedConfigurationError is { } configurationError)
         {
+            ActivityLog.Write($"endpoint configuration refused: {configurationError}");
             MessageBox.Show(this,
                 $"{configurationError}\n\n" +
                 "Correct the file in %LOCALAPPDATA%\\VaultLoop and restart VaultLoop, " +
@@ -431,6 +433,9 @@ internal sealed partial class MainForm : Form
             () => _firewall.SetNoSaveEnabled(enabled, gamePath),
             () =>
             {
+                ActivityLog.Write(enabled
+                    ? $"no-save enabled from {(fromHotkey ? "shortcut" : "window")} for {gamePath}"
+                    : $"no-save disabled from {(fromHotkey ? "shortcut" : "window")}");
                 SetDisplayedState(enabled);
                 if (fromHotkey)
                 {
@@ -483,6 +488,7 @@ internal sealed partial class MainForm : Form
 
     private void ReportMutationFailure(Exception exception, bool fromHotkey)
     {
+        ActivityLog.Write("no-save change failed", exception);
         if (fromHotkey)
         {
             ShowStatusToast("NO-SAVE ERROR", Palette.Yellow, exception.Message);
@@ -742,6 +748,7 @@ internal sealed partial class MainForm : Form
         }
         catch (Exception exception)
         {
+            ActivityLog.Write("restore on close failed", exception);
             if (eventArgs.CloseReason != CloseReason.UserClosing)
             {
                 return;

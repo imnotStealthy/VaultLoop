@@ -150,9 +150,11 @@ internal static class Program
                 {
                     firewall.SetNoSaveEnabled(false);
                 }
-                catch
+                catch (Exception exception)
                 {
-                    // The form already reports cleanup failures; this is a final best-effort retry.
+                    // The form already reports cleanup failures; this is a final best-effort
+                    // retry, and the only trace it can leave is the activity log.
+                    ActivityLog.Write("final restore on exit failed", exception);
                 }
             }
             singleInstance.ReleaseMutex();
@@ -198,6 +200,8 @@ internal static class Program
                     return StartupOutcome.HandedOverToElevatedProcess;
                 }
                 firewall.SetNoSaveEnabled(false);
+                ActivityLog.Write(
+                    "startup recovery: removed a rule left by a previous session");
                 outcome = StartupOutcome.RecoveredStaleRule;
             }
 
@@ -219,10 +223,13 @@ internal static class Program
         return outcome;
     }
 
-    private static void ReportStartupFailure(Exception exception) =>
+    private static void ReportStartupFailure(Exception exception)
+    {
+        ActivityLog.Write("startup recovery failed", exception);
         MessageBox.Show(
             $"VaultLoop could not validate or restore its firewall rule:\n{exception.Message}",
             "Startup recovery failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    }
 
     private enum StartupOutcome
     {
@@ -234,6 +241,9 @@ internal static class Program
     internal static void RelaunchElevated(
         string? gamePath, IntPtr foregroundWindow, bool startupLaunch = false)
     {
+        ActivityLog.Write(gamePath is null
+            ? "requesting administrator rights"
+            : "requesting administrator rights to enable no-save");
         StartElevated(BuildElevatedArguments(
             Process.GetCurrentProcess().Id, gamePath, foregroundWindow, startupLaunch));
     }
@@ -372,17 +382,24 @@ internal static class Program
     private static void RestoreFirewallWithRetries()
     {
         var firewall = new FirewallService();
+        Exception? lastFailure = null;
         for (var attempt = 0; attempt < 5; attempt++)
         {
             try
             {
                 firewall.SetNoSaveEnabled(false);
+                ActivityLog.Write("watchdog restored the Rockstar link after the window exited");
                 return;
             }
-            catch
+            catch (Exception exception)
             {
+                lastFailure = exception;
                 Thread.Sleep(250);
             }
+        }
+        if (lastFailure is not null)
+        {
+            ActivityLog.Write("watchdog could not restore the Rockstar link", lastFailure);
         }
     }
 
@@ -392,11 +409,13 @@ internal static class Program
         {
             var firewall = new FirewallService();
             firewall.SetNoSaveEnabled(false);
+            ActivityLog.Write("--restore removed the managed rule");
             MessageBox.Show("The VaultLoop firewall rule is inactive.", "VaultLoop restore",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception exception)
         {
+            ActivityLog.Write("--restore failed", exception);
             MessageBox.Show($"The firewall rule could not be restored:\n{exception.Message}",
                 "VaultLoop restore failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }

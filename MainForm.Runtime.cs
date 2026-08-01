@@ -179,6 +179,8 @@ internal sealed partial class MainForm
         }
 
         _leakReported = true;
+        ActivityLog.Write(
+            "the rule is active but the game opened a new connection to a blocked address");
         SetGameStatus("BLOCK NOT EFFECTIVE", Palette.HotPink);
         ShowStatusToast("BLOCK NOT EFFECTIVE", Palette.Yellow,
             "The rule is active but GTA opened a new connection to a blocked address. " +
@@ -219,12 +221,17 @@ internal sealed partial class MainForm
             () => _firewall!.SetNoSaveEnabled(false),
             () =>
             {
+                ActivityLog.Write(
+                    "no-save disabled automatically: the verified GTA process is gone");
                 SetDisplayedState(false);
                 ShowStatusToast("NO-SAVE RESTORED", Palette.Acid,
                     "The verified GTA process is gone. No-save was disabled automatically.");
             },
             exception =>
-                ShowStatusToast("AUTO-RESTORE FAILED", Palette.Yellow, exception.Message));
+            {
+                ActivityLog.Write("automatic restore after game loss failed", exception);
+                ShowStatusToast("AUTO-RESTORE FAILED", Palette.Yellow, exception.Message);
+            });
     }
 
     private void RefreshGameContext()

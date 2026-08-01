@@ -308,6 +308,18 @@ internal static class SelfTest
                        exitItems[0].Text.Replace("&&", "&") == "EXIT & RESTORE";
             });
 
+        // Writes one labelled entry to the user's activity log. That is the whole point: the
+        // log is the only trace a failed session leaves, so the path that writes it has to be
+        // exercised rather than assumed.
+        checks.Verify("the activity log records one flattened entry per line", () =>
+        {
+            ActivityLog.Write("self-test entry\r\nwith an embedded line break");
+            var contents = AppSettingsStorage.ReadText(
+                ActivityLog.FileName, includeLegacy: false, out _);
+            return contents is not null &&
+                   contents.Contains("self-test entry with an embedded line break");
+        });
+
         checks.Verify("the preview window builds with the expected chrome", () =>
         {
             using var preview = new MainForm(null, previewMode: true);
