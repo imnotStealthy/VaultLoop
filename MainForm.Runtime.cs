@@ -216,9 +216,9 @@ internal sealed partial class MainForm
     private void RestoreAfterGameLoss()
     {
         RunExclusive(
+            () => _firewall!.SetNoSaveEnabled(false),
             () =>
             {
-                _firewall!.SetNoSaveEnabled(false);
                 SetDisplayedState(false);
                 ShowStatusToast("NO-SAVE RESTORED", Palette.Acid,
                     "The verified GTA process is gone. No-save was disabled automatically.");

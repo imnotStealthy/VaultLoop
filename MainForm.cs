@@ -381,80 +381,120 @@ internal sealed partial class MainForm : Form
 
     private void ApplyState(bool enabled, bool fromHotkey = false)
     {
-        if (!_stateKnown)
+        if (!_stateKnown || _applying || _firewall is null)
         {
             return;
         }
 
-        RunExclusive(() => MutateState(enabled, fromHotkey), exception =>
+        string? gamePath;
+        IntPtr requestedForegroundWindow;
+        try
         {
-            if (fromHotkey)
-            {
-                ShowStatusToast("NO-SAVE ERROR", Palette.Yellow, exception.Message);
-            }
-            else
-            {
-                MessageBox.Show(this, exception.Message, "Firewall error",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        });
-    }
-
-    private void MutateState(bool enabled, bool fromHotkey)
-    {
-        string? gamePath = null;
-        var requestedForegroundWindow = IntPtr.Zero;
-        if (enabled)
+            gamePath = ResolveGamePath(enabled, fromHotkey, out requestedForegroundWindow);
+        }
+        catch (Exception exception)
         {
-            if (fromHotkey)
-            {
-                if (!GameProcessService.TryGetVerifiedForegroundGame(
-                        out var foregroundPath, out var liveForegroundWindow) ||
-                    !GameProcessService.IsCurrentForegroundWindow(liveForegroundWindow))
-                {
-                    throw new InvalidOperationException(
-                        "GTA V must remain in the foreground to use the shortcut.");
-                }
-                gamePath = foregroundPath;
-                requestedForegroundWindow = liveForegroundWindow;
-                _verifiedGamePath = foregroundPath;
-                _hotkeyHook.Arm(liveForegroundWindow);
-                _controllerShortcutService.Arm(liveForegroundWindow);
-            }
-            else if (GameProcessService.TryFindVerifiedRunningGame(out var runningPath))
-            {
-                gamePath = runningPath;
-                _verifiedGamePath = runningPath;
-            }
-            else
-            {
-                throw new InvalidOperationException(
-                    "Start a verified copy of GTA V before enabling no-save.");
-            }
+            // Nothing was written to the firewall, so the displayed state still holds and
+            // there is nothing to resynchronize.
+            ReportMutationFailure(exception, fromHotkey);
+            return;
         }
 
         if (!Program.IsRunningAsAdministrator())
         {
-            Program.RelaunchElevated(gamePath, requestedForegroundWindow);
-            Close();
+            try
+            {
+                Program.RelaunchElevated(gamePath, requestedForegroundWindow);
+                Close();
+            }
+            catch (Exception exception)
+            {
+                ReportMutationFailure(exception, fromHotkey);
+            }
             return;
         }
 
-        _firewall!.SetNoSaveEnabled(enabled, gamePath);
-        SetDisplayedState(enabled);
+        RunExclusive(
+            () => _firewall.SetNoSaveEnabled(enabled, gamePath),
+            () =>
+            {
+                SetDisplayedState(enabled);
+                if (fromHotkey)
+                {
+                    ShowStatusToast(enabled ? "NO-SAVE ACTIVE" : "NO-SAVE INACTIVE",
+                        enabled ? Palette.HotPink : Palette.Acid);
+                }
+            },
+            exception => ReportMutationFailure(exception, fromHotkey));
+    }
+
+    /// <summary>
+    /// Resolves the executable the rule must name and arms both shortcuts on the window that
+    /// was verified. Throws when no-save is being enabled without a verified game — the one
+    /// condition that has to stop a mutation before it starts.
+    /// </summary>
+    private string? ResolveGamePath(
+        bool enabled, bool fromHotkey, out IntPtr requestedForegroundWindow)
+    {
+        requestedForegroundWindow = IntPtr.Zero;
+        if (!enabled)
+        {
+            return null;
+        }
+
         if (fromHotkey)
         {
-            ShowStatusToast(enabled ? "NO-SAVE ACTIVE" : "NO-SAVE INACTIVE",
-                enabled ? Palette.HotPink : Palette.Acid);
+            if (!GameProcessService.TryGetVerifiedForegroundGame(
+                    out var foregroundPath, out var liveForegroundWindow) ||
+                !GameProcessService.IsCurrentForegroundWindow(liveForegroundWindow))
+            {
+                throw new InvalidOperationException(
+                    "GTA V must remain in the foreground to use the shortcut.");
+            }
+            requestedForegroundWindow = liveForegroundWindow;
+            _verifiedGamePath = foregroundPath;
+            _hotkeyHook.Arm(liveForegroundWindow);
+            _controllerShortcutService.Arm(liveForegroundWindow);
+            return foregroundPath;
+        }
+
+        if (GameProcessService.TryFindVerifiedRunningGame(out var runningPath))
+        {
+            _verifiedGamePath = runningPath;
+            return runningPath;
+        }
+
+        throw new InvalidOperationException(
+            "Start a verified copy of GTA V before enabling no-save.");
+    }
+
+    private void ReportMutationFailure(Exception exception, bool fromHotkey)
+    {
+        if (fromHotkey)
+        {
+            ShowStatusToast("NO-SAVE ERROR", Palette.Yellow, exception.Message);
+        }
+        else
+        {
+            MessageBox.Show(this, exception.Message, "Firewall error",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
     /// <summary>
-    /// Runs a firewall mutation with the toggle locked and the refresh loop invalidated, then
-    /// reports a failure the way the calling path requires and resynchronizes the display from
-    /// the firewall itself — a failed mutation leaves the real state unknown.
+    /// Runs a firewall mutation on a thread-pool thread with the toggle locked and the refresh
+    /// loop invalidated, then applies its outcome back on the UI thread.
     /// </summary>
-    private void RunExclusive(Action mutation, Action<Exception> reportFailure)
+    /// <remarks>
+    /// The mutation used to run inline. Confirming a rule costs seven polls with an
+    /// exponential backoff — up to about two seconds, and twice that when an activation fails
+    /// and rolls back — during which the message loop was blocked: the window stopped
+    /// repainting, the wait cursor never appeared, and queued raw input messages were not
+    /// pumped. Only the firewall call moves; the decision of what to write, and every UI
+    /// update, still happen on the UI thread.
+    /// </remarks>
+    private void RunExclusive(
+        Action mutation, Action onSuccess, Action<Exception> reportFailure)
     {
         if (_applying || _firewall is null)
         {
@@ -465,19 +505,69 @@ internal sealed partial class MainForm : Form
         Interlocked.Increment(ref _runtimeRefreshVersion);
         _toggle.Enabled = false;
         UseWaitCursor = true;
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            Exception? failure = null;
+            try
+            {
+                mutation();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            CompleteExclusive(failure, onSuccess, reportFailure);
+        });
+    }
+
+    /// <summary>
+    /// Applies a finished mutation back on the UI thread, resynchronizing the display from the
+    /// firewall itself when it failed — a failed mutation leaves the real state unknown. The
+    /// window can be gone by the time the mutation returns, so the exclusive flag is released
+    /// on every path: left set, it would keep the toggle and both shortcuts inert.
+    /// </summary>
+    private void CompleteExclusive(
+        Exception? failure, Action onSuccess, Action<Exception> reportFailure)
+    {
+        if (IsDisposed || !IsHandleCreated)
+        {
+            _applying = false;
+            return;
+        }
+
         try
         {
-            mutation();
+            BeginInvoke(new Action(() =>
+            {
+                if (IsDisposed)
+                {
+                    _applying = false;
+                    return;
+                }
+
+                try
+                {
+                    if (failure is null)
+                    {
+                        onSuccess();
+                    }
+                    else
+                    {
+                        reportFailure(failure);
+                        ResynchronizeState();
+                    }
+                }
+                finally
+                {
+                    UseWaitCursor = false;
+                    _toggle.Enabled = _isAdministrator && _stateKnown;
+                    _applying = false;
+                }
+            }));
         }
-        catch (Exception exception)
+        catch (InvalidOperationException)
         {
-            reportFailure(exception);
-            ResynchronizeState();
-        }
-        finally
-        {
-            UseWaitCursor = false;
-            _toggle.Enabled = _isAdministrator && _stateKnown;
+            // The window closed between the handle check and BeginInvoke.
             _applying = false;
         }
     }
