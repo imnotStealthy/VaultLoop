@@ -21,7 +21,21 @@ namespace ReplayGlitchGTA;
 internal static class TrustCache
 {
     private const int MaximumCacheEntries = 16;
-    private const int TrustedCacheLifetimeSeconds = 30;
+
+    /// <summary>
+    /// Five minutes. Verifying the game executable means hashing it whole: measured at 313 ms
+    /// cold and 73 ms warm on a 100 MB signed binary. The detector runs every 1200 ms, so this
+    /// lifetime is what keeps that cost off the play session. The fingerprint, not the clock,
+    /// is what makes the entry safe to reuse — a file swapped underneath the path no longer
+    /// matches it.
+    /// </summary>
+    private const int TrustedCacheLifetimeSeconds = 300;
+
+    /// <summary>
+    /// A rejection expires far sooner than an acceptance, so a repaired install, or a verdict
+    /// that only failed because revocation data was momentarily unreachable, is picked up on
+    /// the next few ticks instead of being held for minutes.
+    /// </summary>
     private const int RejectedCacheLifetimeSeconds = 15;
     private const int FileBasicInfoClass = 0;
 
