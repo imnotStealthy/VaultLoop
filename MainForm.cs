@@ -38,7 +38,7 @@ internal sealed partial class MainForm : Form
     private volatile bool _stateKnown = true;
 
     private bool _darkMode;
-    private bool _hudEnabled = true;
+    private bool _hudEnabled;
     private bool _hasVerifiedForegroundGame;
     private bool _hotkeyRegistered;
     private bool _controllerRawInputRegistered;
@@ -57,11 +57,16 @@ internal sealed partial class MainForm : Form
             shortcut.Modifiers, shortcut.Key,
             () => _isAdministrator && !_applying && _stateKnown);
         _hotkeyHook.Pressed += HandleHotkeyPressed;
+        _hotkeyHook.Refused += HandleHotkeyRefused;
         _controllerShortcutService = new ControllerShortcutService(
             ControllerShortcutSettings.Load(),
             () => _isAdministrator && !_applying && _stateKnown);
         _controllerShortcutService.Pressed += HandleHotkeyPressed;
+        _controllerShortcutService.Refused += HandleHotkeyRefused;
         _darkMode = ThemeSettings.Load();
+        // Preview mode has no HUD to show, and reading the preference there would make the
+        // rendered window depend on it. It keeps the default instead.
+        _hudEnabled = _previewMode || HudSettings.Load();
 
         var chrome = BuildLayout();
         _shortcutBadge = chrome.ShortcutBadge;
@@ -256,17 +261,83 @@ internal sealed partial class MainForm : Form
         }
     }
 
+    /// <summary>
+    /// Explains a shortcut press the gate refused. Every condition it names is deliberate, but
+    /// a press that toggles nothing and says nothing is indistinguishable from a keyboard that
+    /// stopped working, and the two conditions a user hits — no administrator rights, and GTA
+    /// not in the foreground — are both fixable in a few seconds once named.
+    /// </summary>
+    private void HandleHotkeyRefused(object? sender, EventArgs eventArgs)
+    {
+        if (IsDisposed || !IsHandleCreated)
+        {
+            return;
+        }
+
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                if (IsDisposed || _applying)
+                {
+                    return;
+                }
+
+                var reason = GetShortcutRefusalReason();
+                if (reason is null)
+                {
+                    return;
+                }
+                ActivityLog.Write($"{ShortcutText} refused: {reason}");
+                ShowStatusToast("SHORTCUT UNAVAILABLE", Palette.Yellow, reason);
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            // The window closed between the handle check and BeginInvoke.
+        }
+    }
+
+    /// <summary>
+    /// The missing condition, or <c>null</c> when the press was refused by a race the user
+    /// cannot act on — a mutation that finished in the meantime explains nothing.
+    /// </summary>
+    private string? GetShortcutRefusalReason()
+    {
+        if (!_isAdministrator)
+        {
+            return "VaultLoop must run as administrator. " +
+                   "Select LAUNCH AS ADMIN, then approve the Windows prompt.";
+        }
+        if (!_stateKnown)
+        {
+            return "The Windows Firewall state is unavailable, so no-save cannot be changed.";
+        }
+        if (!_hasVerifiedForegroundGame)
+        {
+            return "A verified GTA V window must be in the foreground.";
+        }
+        return null;
+    }
+
     private void RefreshRuntimeState(bool showErrors = false)
     {
         RefreshGameContext();
         RefreshState(showErrors);
     }
 
-    private void SetGameStatus(string text, Color background)
+    private void SetGameStatus(string text, Color color)
     {
         _gameStatusLabel.Text = text;
-        _gameStatusLabel.BackColor = background;
+        // Keep the footer black and use the status color for the text. In particular,
+        // WAITING FOR GTA is the red warning that no verified GTA process is running.
+        _gameStatusLabel.BackColor = Palette.Ink;
+        _gameStatusLabel.ForeColor = GetGameStatusTextColor(text, color);
+        UpdateToggleAvailability();
     }
+
+    internal static Color GetGameStatusTextColor(string text, Color requestedColor) =>
+        text == "WAITING FOR GTA" ? Palette.HotPink : requestedColor;
 
     private string ShortcutText
     {
@@ -340,6 +411,17 @@ internal sealed partial class MainForm : Form
             _hudEnabled ? "Hide the no-save HUD" : "Show the no-save HUD";
         _trayMenu?.SetHudEnabled(_hudEnabled);
         UpdateHudVisibility();
+        try
+        {
+            HudSettings.Save(_hudEnabled);
+        }
+        catch (Exception exception)
+        {
+            ShowFromTray();
+            MessageBox.Show(this,
+                $"The HUD changed for this session but could not be saved:\n{exception.Message}",
+                "HUD preference", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void UpdateHudVisibility()
@@ -579,8 +661,8 @@ internal sealed partial class MainForm : Form
                 finally
                 {
                     UseWaitCursor = false;
-                    _toggle.Enabled = _isAdministrator && _stateKnown;
                     _applying = false;
+                    UpdateToggleAvailability();
                 }
             }));
         }
@@ -642,7 +724,7 @@ internal sealed partial class MainForm : Form
         _toggle.IsRecoveryMode = false;
         _toggle.IsStateKnown = true;
         _toggle.Checked = enabled;
-        _toggle.Enabled = _isAdministrator && !_applying;
+        UpdateToggleAvailability();
         _miniHud?.SetState(enabled);
         RenderStatus(
             enabled ? Palette.HotPink : Palette.Acid,
@@ -657,7 +739,7 @@ internal sealed partial class MainForm : Form
         _firewallState = FirewallRuleState.Invalid;
         _toggle.IsStateKnown = false;
         _toggle.IsRecoveryMode = true;
-        _toggle.Enabled = _isAdministrator && !_applying;
+        UpdateToggleAvailability();
         _miniHud?.SetState(null);
         RenderStatus(Palette.Yellow, "INVALID", "CLICK RESTORE, THEN RETRY",
             "Restore an invalid VaultLoop firewall rule");
@@ -669,7 +751,7 @@ internal sealed partial class MainForm : Form
         _firewallState = FirewallRuleState.Invalid;
         _toggle.IsRecoveryMode = false;
         _toggle.IsStateKnown = false;
-        _toggle.Enabled = false;
+        UpdateToggleAvailability();
         _miniHud?.SetState(null);
         RenderStatus(Palette.Yellow, "UNKNOWN", "FIREWALL STATE UNAVAILABLE",
             "No-save state unknown");
@@ -692,6 +774,35 @@ internal sealed partial class MainForm : Form
             _trayIcon.Text = $"VaultLoop - No-save {title.ToLowerInvariant()}";
         }
         Invalidate();
+    }
+
+    /// <summary>
+    /// Keeps the no-save control available for deactivation and invalid-rule recovery, while
+    /// requiring a verified running game for activation. This is the one source of truth used
+    /// after game-context, firewall-state, and mutation updates.
+    /// </summary>
+    private void UpdateToggleAvailability()
+    {
+        var enabled = ShouldEnableNoSaveToggle(
+            _isAdministrator, _applying, _stateKnown, _firewallState,
+            _verifiedGamePath is not null);
+        if (_toggle.Enabled != enabled)
+        {
+            _toggle.Enabled = enabled;
+            _toggle.Invalidate();
+        }
+    }
+
+    internal static bool ShouldEnableNoSaveToggle(
+        bool isAdministrator, bool applying, bool stateKnown,
+        FirewallRuleState firewallState, bool hasVerifiedRunningGame)
+    {
+        if (!isAdministrator || applying || !stateKnown)
+        {
+            return false;
+        }
+
+        return firewallState != FirewallRuleState.Inactive || hasVerifiedRunningGame;
     }
 
     private static void ShowStatusToast(string title, Color color, string? detail = null)

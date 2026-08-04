@@ -5,7 +5,14 @@ namespace ReplayGlitchGTA;
 
 internal sealed class ShortcutDialog : BrutalistDialog
 {
+    private const string CaptureHint =
+        "Press a new combination. Use a modifier, or a function key.";
+    private const string RejectedHint =
+        "Not accepted. Press a function key, or hold Ctrl, Alt, or Shift with a key.";
+
     private readonly Button _capturedButton;
+    private readonly Label _keyboardHint;
+    private readonly Color _hintColor;
     private readonly Button _controllerCaptureButton;
     private readonly Button _configureControllerButton;
     private readonly Label _controllerHint;
@@ -28,7 +35,12 @@ internal sealed class ShortcutDialog : BrutalistDialog
         ShortcutKey = key;
         ControllerShortcut = controllerShortcut;
         _controllerService = controllerService;
-        KeyPreview = false;
+        // The capture used to be bound to the capture field alone, so every key was ignored
+        // once the focus had moved — clicking REPLACE or CLEAR for the controller was enough,
+        // and the dialog then looked like it had stopped reading the keyboard. The whole
+        // dialog listens instead; navigation keys are still left to the dialog.
+        KeyPreview = true;
+        KeyDown += CaptureShortcut;
         var canvas = darkMode ? Palette.DarkCanvas : Palette.Yellow;
         var textColor = darkMode ? Palette.Paper : Palette.Ink;
 
@@ -40,13 +52,16 @@ internal sealed class ShortcutDialog : BrutalistDialog
             BackColor = canvas,
             ForeColor = textColor
         });
-        Controls.Add(new Label
+        _hintColor = textColor;
+        _keyboardHint = new Label
         {
-            Text = "Press a new combination. Use a modifier, or a function key.",
+            Text = CaptureHint,
             Bounds = new Rectangle(30, 96, 460, 28),
             BackColor = canvas,
             ForeColor = textColor
-        });
+        };
+        _keyboardHint.Name = "KeyboardShortcutHint";
+        Controls.Add(_keyboardHint);
 
         _capturedButton = BrutalistControls.CreateOutlinedButton(
             ShortcutSettings.Format(modifiers, key), new Rectangle(30, 128, 460, 48),
@@ -55,9 +70,8 @@ internal sealed class ShortcutDialog : BrutalistDialog
         _capturedButton.Name = "ShortcutCapture";
         _capturedButton.AccessibleName = "Keyboard shortcut capture field";
         _capturedButton.AccessibleDescription =
-            "Focus this control and press the shortcut you want to use.";
+            "Press the shortcut you want to use anywhere in this dialog.";
         _capturedButton.Font = Typography.ShortcutCapture;
-        _capturedButton.KeyDown += CaptureShortcut;
         Controls.Add(_capturedButton);
 
         Controls.Add(new Label
@@ -211,30 +225,65 @@ internal sealed class ShortcutDialog : BrutalistDialog
 
     private void CaptureShortcut(object? sender, KeyEventArgs eventArgs)
     {
-        var key = eventArgs.KeyCode;
+        var outcome = TryCapture(eventArgs.KeyCode, eventArgs.Modifiers);
+        if (outcome == CaptureOutcome.Rejected)
+        {
+            System.Media.SystemSounds.Beep.Play();
+        }
+        if (outcome != CaptureOutcome.Accepted)
+        {
+            return;
+        }
+        eventArgs.Handled = true;
+        eventArgs.SuppressKeyPress = true;
+    }
+
+    /// <summary>
+    /// Applies one key press to the captured shortcut. A press that does not describe a usable
+    /// shortcut says so on screen: the rule — a function key, or a modifier with a key — used
+    /// to be enforced by a system beep alone, which is inaudible on a muted machine and left
+    /// the dialog looking unresponsive.
+    /// </summary>
+    internal CaptureOutcome TryCapture(Keys key, Keys modifiers)
+    {
         if (key is Keys.Tab or Keys.Escape or Keys.Enter or Keys.Space or
             Keys.Left or Keys.Right or Keys.Up or Keys.Down or
             Keys.Home or Keys.End or Keys.PageUp or Keys.PageDown)
         {
-            return;
+            return CaptureOutcome.Ignored;
         }
         if (key is Keys.ControlKey or Keys.Menu or Keys.ShiftKey)
         {
-            return;
+            return CaptureOutcome.Ignored;
         }
 
-        var modifiers = eventArgs.Modifiers & (Keys.Control | Keys.Alt | Keys.Shift);
-        if (!IsValidShortcut(modifiers, key))
+        var capturedModifiers = modifiers & (Keys.Control | Keys.Alt | Keys.Shift);
+        if (!IsValidShortcut(capturedModifiers, key))
         {
-            System.Media.SystemSounds.Beep.Play();
-            return;
+            _keyboardHint.Text = RejectedHint;
+            _keyboardHint.ForeColor = Palette.HotPink;
+            return CaptureOutcome.Rejected;
         }
 
-        ShortcutModifiers = modifiers;
+        ShortcutModifiers = capturedModifiers;
         ShortcutKey = key;
-        _capturedButton.Text = ShortcutSettings.Format(modifiers, key);
-        eventArgs.Handled = true;
-        eventArgs.SuppressKeyPress = true;
+        _capturedButton.Text = ShortcutSettings.Format(capturedModifiers, key);
+        _keyboardHint.Text = CaptureHint;
+        _keyboardHint.ForeColor = _hintColor;
+        return CaptureOutcome.Accepted;
+    }
+
+    /// <summary>What one key press did to the captured shortcut.</summary>
+    internal enum CaptureOutcome
+    {
+        /// <summary>A navigation or modifier key the dialog leaves alone.</summary>
+        Ignored,
+
+        /// <summary>A key press that does not describe a usable shortcut.</summary>
+        Rejected,
+
+        /// <summary>The captured shortcut now describes this press.</summary>
+        Accepted
     }
 
     private void ToggleControllerCapture()

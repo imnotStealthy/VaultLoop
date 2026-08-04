@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -25,8 +26,8 @@ internal static class SelfTest
 
         var checks = new CheckList();
 
-        checks.Verify("assembly version is 1.2.5.0",
-            () => typeof(Program).Assembly.GetName().Version?.ToString() == "1.2.5.0");
+        checks.Verify("assembly version is 1.2.6.0",
+            () => typeof(Program).Assembly.GetName().Version?.ToString() == "1.2.6.0");
         checks.Verify("assembly targets the canonical .NET Framework runtime",
             () => typeof(Program).Assembly.ImageRuntimeVersion == "v4.0.30319");
         checks.Verify("embedded logo resource is present",
@@ -175,6 +176,43 @@ internal static class SelfTest
         checks.Verify("shortcut toggling activates and deactivates no-save",
             () => MainForm.GetToggledEnabledState(FirewallRuleState.Inactive) &&
                   !MainForm.GetToggledEnabledState(FirewallRuleState.Active));
+        checks.Verify("no-save activation requires a verified running GTA",
+            () => !MainForm.ShouldEnableNoSaveToggle(
+                       isAdministrator: true, applying: false, stateKnown: true,
+                       firewallState: FirewallRuleState.Inactive,
+                       hasVerifiedRunningGame: false) &&
+                  MainForm.ShouldEnableNoSaveToggle(
+                      isAdministrator: true, applying: false, stateKnown: true,
+                      firewallState: FirewallRuleState.Inactive,
+                      hasVerifiedRunningGame: true) &&
+                  MainForm.ShouldEnableNoSaveToggle(
+                      isAdministrator: true, applying: false, stateKnown: true,
+                      firewallState: FirewallRuleState.Active,
+                      hasVerifiedRunningGame: false) &&
+                  MainForm.ShouldEnableNoSaveToggle(
+                      isAdministrator: true, applying: false, stateKnown: true,
+                      firewallState: FirewallRuleState.Invalid,
+                      hasVerifiedRunningGame: false) &&
+                  !MainForm.ShouldEnableNoSaveToggle(
+                      isAdministrator: true, applying: false, stateKnown: false,
+                      firewallState: FirewallRuleState.Active,
+                      hasVerifiedRunningGame: true) &&
+                  !MainForm.ShouldEnableNoSaveToggle(
+                      isAdministrator: true, applying: true, stateKnown: true,
+                      firewallState: FirewallRuleState.Inactive,
+                      hasVerifiedRunningGame: true));
+        checks.Verify("GTA-not-launched status uses the red text warning",
+            () => MainForm.GetGameStatusTextColor("WAITING FOR GTA", Palette.Yellow) ==
+                      Palette.HotPink &&
+                  MainForm.GetGameStatusTextColor("GTA IN BACKGROUND", Palette.Yellow) ==
+                      Palette.Yellow);
+        checks.Verify("a disabled no-save toggle paints its track gray",
+            () => BooleanToggle.GetTrackColor(
+                       enabled: false, stateKnown: true, recoveryMode: false,
+                       isChecked: false) == SystemColors.ControlDark &&
+                  BooleanToggle.GetTrackColor(
+                      enabled: false, stateKnown: false, recoveryMode: false,
+                      isChecked: false) == Palette.Yellow);
         checks.Verify("controller shortcuts use the accepted 500 ms hold",
             () => ControllerShortcutService.HoldMilliseconds == 500);
         checks.Verify("controller shortcut settings round-trip without device ambiguity", () =>
@@ -212,6 +250,37 @@ internal static class SelfTest
                     ControllerButtons.West |
                     ControllerButtons.LeftTrigger);
         });
+        // Measured on the controller this was found with: the left trigger rests at 53 of 255,
+        // above the threshold of 30, so every reading carried LT and the exact match against
+        // DPAD LEFT + A could never hold.
+        checks.Verify("an analog input a controller rests on is not a pressed button", () =>
+        {
+            var firstReading = ControllerShortcutService.TrackStuckAnalogInputs(
+                ControllerButtons.LeftTrigger, null, out var stuck);
+            if (firstReading != ControllerButtons.None ||
+                stuck != ControllerButtons.LeftTrigger)
+            {
+                return false;
+            }
+
+            var held = ControllerShortcutService.TrackStuckAnalogInputs(
+                ControllerButtons.LeftTrigger | ControllerButtons.DPadLeft |
+                ControllerButtons.South, stuck, out stuck);
+            if (held != (ControllerButtons.DPadLeft | ControllerButtons.South))
+            {
+                return false;
+            }
+
+            // Read below its threshold once, the trigger becomes a usable button again.
+            ControllerShortcutService.TrackStuckAnalogInputs(
+                ControllerButtons.South, stuck, out stuck);
+            var pulled = ControllerShortcutService.TrackStuckAnalogInputs(
+                ControllerButtons.LeftTrigger, stuck, out stuck);
+            return stuck == ControllerButtons.None &&
+                   pulled == ControllerButtons.LeftTrigger &&
+                   ControllerShortcutService.TrackStuckAnalogInputs(
+                       ControllerButtons.RightTrigger, null, out _) == ControllerButtons.None;
+        });
         checks.Verify("only supported Sony controller product ids use raw HID",
             () => ControllerShortcutService.GetSonyDeviceKind(0x054C, 0x09CC) ==
                       ControllerDeviceKind.DualShock4 &&
@@ -228,6 +297,8 @@ internal static class SelfTest
             using var inputHost = new Form();
             using var controllerService = new ControllerShortcutService(
                 shortcut: null, canTrigger: () => false);
+            controllerService.Pressed += (_, _) => { };
+            controllerService.Refused += (_, _) => { };
             var registered = controllerService.Install(inputHost.Handle);
             controllerService.Uninstall();
             return registered;
@@ -253,6 +324,37 @@ internal static class SelfTest
             return GlobalHotkeyHook.GetPressedModifiers(state, 0) == Keys.Alt &&
                    GlobalHotkeyHook.GetPressedModifiers(
                        0, NativeMethods.AltDownFlag) == Keys.Alt;
+        });
+        // The low-level hook rejects either injection bit before touching tracked state.
+        checks.Verify("injected keyboard events are rejected by both flags", () =>
+            GlobalHotkeyHook.IsInjectedEvent(NativeMethods.InjectedFlag) &&
+            GlobalHotkeyHook.IsInjectedEvent(NativeMethods.LowerIntegrityInjectedFlag) &&
+            GlobalHotkeyHook.IsInjectedEvent(
+                NativeMethods.InjectedFlag | NativeMethods.LowerIntegrityInjectedFlag) &&
+            !GlobalHotkeyHook.IsInjectedEvent(0));
+        // A transition the hook cannot observe — every key event during a UAC prompt goes to
+        // the secure desktop — used to leave the tracked state describing a keyboard that no
+        // longer exists, and the shortcut then matched nothing until VaultLoop was restarted.
+        checks.Verify("tracked modifiers are rebuilt from the live keyboard", () =>
+        {
+            var stale = GlobalHotkeyHook.UpdateModifierKeyState(
+                0, Keys.LControlKey, keyDown: true, keyUp: false);
+            var released = GlobalHotkeyHook.ReconcileModifierKeyState(stale, _ => false);
+            var held = GlobalHotkeyHook.ReconcileModifierKeyState(
+                0, key => key == Keys.RShiftKey);
+            return GlobalHotkeyHook.GetPressedModifiers(released, 0) == Keys.None &&
+                   GlobalHotkeyHook.GetPressedModifiers(held, 0) == Keys.Shift;
+        });
+        // The hook thread reads the shortcut while the UI thread rewrites it, so both halves
+        // travel in one field: a torn pair matches a combination the user never configured.
+        checks.Verify("a reconfigured shortcut is published as one combination", () =>
+        {
+            var hook = new GlobalHotkeyHook(
+                Keys.Control | Keys.Shift, Keys.F8, () => false)
+            {
+                Shortcut = (Keys.Alt, Keys.F9)
+            };
+            return hook.Shortcut == (Keys.Alt, Keys.F9) && !hook.Armed;
         });
 
         checks.Verify(".NET Framework 4.8 runtime check passes",
@@ -325,9 +427,37 @@ internal static class SelfTest
             using var preview = new MainForm(null, previewMode: true);
             var adminButtons = preview.Controls.Find("LaunchAsAdminButton", true);
             var hudButtons = preview.Controls.Find("HudVisibilityButton", true);
+            var versionLabels = preview.Controls.Find("VersionLabel", true);
             return preview.Text == "VaultLoop" && preview.ClientSize.Width >= 780 &&
                    adminButtons.Length == 1 && adminButtons[0].Text == "ADMIN READY" &&
-                   hudButtons.Length == 1 && hudButtons[0].Text == "HUD ON";
+                   hudButtons.Length == 1 && hudButtons[0].Text == "HUD ON" &&
+                   versionLabels.Length == 1 && versionLabels[0].Text == "v1.2.6";
+        });
+        checks.Verify("the displayed version follows the assembly version",
+            () => MainForm.VersionText == "v" + typeof(Program).Assembly
+                .GetName().Version?.ToString(3));
+        // The capture used to be bound to the capture field alone, so a click on the controller
+        // buttons moved the focus and every later key press was dropped without a word.
+        checks.Verify("the shortcut dialog captures a key press whatever holds the focus", () =>
+        {
+            using var dialog = new ShortcutDialog(
+                Keys.Control | Keys.Shift, Keys.F8, darkMode: false);
+            var hints = dialog.Controls.Find("KeyboardShortcutHint", true);
+            return dialog.KeyPreview &&
+                   dialog.TryCapture(Keys.F9, Keys.None) ==
+                       ShortcutDialog.CaptureOutcome.Accepted &&
+                   dialog.ShortcutKey == Keys.F9 &&
+                   dialog.ShortcutModifiers == Keys.None &&
+                   dialog.TryCapture(Keys.K, Keys.None) ==
+                       ShortcutDialog.CaptureOutcome.Rejected &&
+                   dialog.ShortcutKey == Keys.F9 &&
+                   hints.Length == 1 && hints[0].Text.StartsWith("Not accepted") &&
+                   dialog.TryCapture(Keys.K, Keys.Control) ==
+                       ShortcutDialog.CaptureOutcome.Accepted &&
+                   dialog.ShortcutModifiers == Keys.Control &&
+                   hints[0].Text.StartsWith("Press a new combination") &&
+                   dialog.TryCapture(Keys.Tab, Keys.None) ==
+                       ShortcutDialog.CaptureOutcome.Ignored;
         });
         checks.Verify("the shortcut dialog exposes disabled controller configuration",
             () =>

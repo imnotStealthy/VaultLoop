@@ -60,8 +60,9 @@ A controller shortcut contains exactly two or three buttons. Hold the combinatio
 for 500 ms, then release it to toggle no-save. Xbox controllers use XInput.
 DualShock 4, DualSense, and DualSense Edge use Windows Raw Input over USB or Bluetooth.
 
-Use **HUD ON** or **HUD OFF** to control the status HUD. The HUD appears only while
-a verified GTA window is in the foreground.
+Use **HUD ON** or **HUD OFF** to control the status HUD. The choice is stored and
+restored at the next launch. The HUD appears only while a verified GTA window is
+in the foreground.
 
 Minimizing VaultLoop hides it in the system tray. The tray menu controls the
 window, HUD, **START WITH WINDOWS**, and **EXIT & RESTORE**. Windows startup opens it in the tray.
@@ -89,8 +90,10 @@ VaultLoop.exe --diagnose
 ```
 
 The command reports the configured blocked set, the managed firewall-rule state,
-and TCP endpoints owned by the verified GTA process. It does not change the
-firewall.
+TCP endpoints owned by the verified GTA process, and the controller shortcut. When
+an Xbox controller shortcut is configured, it samples that controller for four
+seconds and prints every combination it reads, so a combination that does not match
+is visible. It does not change the firewall.
 
 ### Validate a source build
 
@@ -113,6 +116,7 @@ File settings are stored under `%LOCALAPPDATA%\VaultLoop`.
 | `shortcut.txt` | `CTRL+SHIFT+F8` | Stores the keyboard shortcut. |
 | `controller-shortcut.txt` | Disabled | Stores the controller and its exact button combination. |
 | `theme.txt` | Light | Stores `light` or `dark`. |
+| `hud.txt` | On | Stores `on` or `off` for the status HUD. |
 | `guide-step.txt` | Step 1 | Stores the current **HOW TO USE** page. |
 | `endpoints.txt` | `192.81.241.171` | Replaces the built-in blocked set at the next launch. |
 | `activity.log` | Empty | Written by VaultLoop. Records the last 400 firewall decisions and failures. |
@@ -148,6 +152,10 @@ when an entry is invalid or outside those allocations.
   registry command pointing to the old path. Disable and re-enable the option.
 - Controllers not exposed through the supported XInput or Sony Raw Input paths
   are not configurable.
+- A controller shortcut must be pressed exactly: an extra button held at the same
+  time prevents it. An analog trigger counts as a button above 30 of 255. A trigger
+  that never reads below that value is treated as resting and is ignored, which
+  also means it cannot be used in a shortcut on that controller.
 - A controller shortcut is bound to one device identity. Moving an Xbox
   controller to another XInput slot, or moving a PlayStation controller between
   USB and Bluetooth, requires configuring the shortcut again.

@@ -83,9 +83,17 @@ internal sealed partial class MainForm
             BackColor = Palette.Yellow,
             TabStop = false
         };
+        // The title keeps its place; only its box is narrowed to what the word occupies, so the
+        // version sits against it at any DPI instead of at a guessed offset.
+        var titleWidth = TextRenderer.MeasureText("VAULTLOOP", Typography.WindowTitle).Width;
         var title = BrutalistControls.MakeLabel(
-            "VAULTLOOP", new Rectangle(58, 7, 280, 34),
+            "VAULTLOOP", new Rectangle(58, 7, titleWidth, 34),
             Typography.WindowTitle, Palette.Ink, Palette.Paper);
+        var version = BrutalistControls.MakeLabel(
+            VersionText, new Rectangle(58 + titleWidth + 6, 7, 90, 34),
+            Typography.TinyMono, Palette.Ink, Palette.Acid);
+        version.Name = "VersionLabel";
+        version.AccessibleName = $"VaultLoop version {VersionText}";
         var theme = BrutalistControls.CreateChromeButton(
             _darkMode ? "LIGHT THEME" : "DARK THEME",
             new Rectangle(408, 10, 130, 28), Typography.TinyMono,
@@ -110,10 +118,25 @@ internal sealed partial class MainForm
 
         minimize.Click += (_, _) => MinimizeToTray();
         close.Click += (_, _) => Close();
-        WindowDrag.Attach(this, titleBar, logo, title);
+        WindowDrag.Attach(this, titleBar, logo, title, version);
 
-        titleBar.Controls.AddRange([logo, title, theme, shortcut, minimize, close]);
+        titleBar.Controls.AddRange([logo, title, version, theme, shortcut, minimize, close]);
         return titleBar;
+    }
+
+    /// <summary>
+    /// The displayed version, read from the assembly so the window cannot drift from the
+    /// binary. The revision is dropped: the three released parts are what identifies a build.
+    /// </summary>
+    internal static string VersionText
+    {
+        get
+        {
+            var version = typeof(MainForm).Assembly.GetName().Version;
+            return version is null
+                ? ""
+                : $"v{version.Major}.{version.Minor}.{version.Build}";
+        }
     }
 
     private void BuildHeader()
@@ -168,7 +191,9 @@ internal sealed partial class MainForm
         {
             Location = new Point(55, 312),
             Size = new Size(315, 86),
-            Enabled = _isAdministrator,
+            Enabled = ShouldEnableNoSaveToggle(
+                _isAdministrator, applying: false, stateKnown: true,
+                firewallState: FirewallRuleState.Inactive, hasVerifiedRunningGame: false),
             AccessibleName = "Toggle no-save mode",
             AccessibleDescription = "Active blocks the Rockstar link. Inactive restores it."
         };
@@ -202,10 +227,11 @@ internal sealed partial class MainForm
             "", new Rectangle(458, 326, 220, 22),
             Typography.StatusDetail, Palette.Acid);
         hudVisibility = BrutalistControls.CreateChromeButton(
-            "HUD ON", new Rectangle(620, 263, 80, 22), Typography.TinyMono,
-            Palette.Ink, Palette.Paper, Palette.Blue, Palette.Ink);
+            _hudEnabled ? "HUD ON" : "HUD OFF", new Rectangle(620, 263, 80, 22),
+            Typography.TinyMono, Palette.Ink, Palette.Paper, Palette.Blue, Palette.Ink);
         hudVisibility.Name = "HudVisibilityButton";
-        hudVisibility.AccessibleName = "Hide the no-save HUD";
+        hudVisibility.AccessibleName =
+            _hudEnabled ? "Hide the no-save HUD" : "Show the no-save HUD";
         hudVisibility.Click += (_, _) => ToggleHudVisibility();
         Controls.AddRange([kicker, title, detail, hudVisibility]);
     }
@@ -237,7 +263,7 @@ internal sealed partial class MainForm
         gameStatus = BrutalistControls.MakeLabel(
             _isAdministrator ? "WAITING FOR GTA" : "ADMIN REQUIRED",
             new Rectangle(502, 458, 221, 24), Typography.TinyMono, Palette.Ink,
-            _isAdministrator ? Palette.Yellow : Palette.HotPink,
+            Palette.HotPink,
             ContentAlignment.MiddleCenter);
         Controls.Add(gameStatus);
     }
