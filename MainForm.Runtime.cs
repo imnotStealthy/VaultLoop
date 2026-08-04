@@ -29,9 +29,14 @@ internal sealed partial class MainForm
             return;
         }
 
+        // The shortcuts are deliberately left as they are while the snapshot is read.
+        // Disarming here and re-arming from ApplyGameContext opened a dead window on every
+        // tick — and an unbounded one whenever the snapshot was discarded — during which a
+        // legitimate keystroke was silently swallowed. Neither guard required by the security
+        // model is weakened: ApplyGameContext still disarms as soon as the verified game stops
+        // being in the foreground, and ShortcutTriggerGate.CanFire still re-checks the live
+        // foreground window before every trigger.
         var version = Interlocked.Increment(ref _runtimeRefreshVersion);
-        _hotkeyHook.Disarm();
-        _controllerShortcutService.Suspend();
         ThreadPool.QueueUserWorkItem(_ =>
         {
             try
@@ -174,6 +179,8 @@ internal sealed partial class MainForm
         }
 
         _leakReported = true;
+        ActivityLog.Write(
+            "the rule is active but the game opened a new connection to a blocked address");
         SetGameStatus("BLOCK NOT EFFECTIVE", Palette.HotPink);
         ShowStatusToast("BLOCK NOT EFFECTIVE", Palette.Yellow,
             "The rule is active but GTA opened a new connection to a blocked address. " +
@@ -211,15 +218,20 @@ internal sealed partial class MainForm
     private void RestoreAfterGameLoss()
     {
         RunExclusive(
+            () => _firewall!.SetNoSaveEnabled(false),
             () =>
             {
-                _firewall!.SetNoSaveEnabled(false);
+                ActivityLog.Write(
+                    "no-save disabled automatically: the verified GTA process is gone");
                 SetDisplayedState(false);
                 ShowStatusToast("NO-SAVE RESTORED", Palette.Acid,
                     "The verified GTA process is gone. No-save was disabled automatically.");
             },
             exception =>
-                ShowStatusToast("AUTO-RESTORE FAILED", Palette.Yellow, exception.Message));
+            {
+                ActivityLog.Write("automatic restore after game loss failed", exception);
+                ShowStatusToast("AUTO-RESTORE FAILED", Palette.Yellow, exception.Message);
+            });
     }
 
     private void RefreshGameContext()

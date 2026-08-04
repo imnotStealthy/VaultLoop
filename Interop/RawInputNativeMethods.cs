@@ -90,7 +90,18 @@ internal static class RawInputNativeMethods
         internal RawInputDeviceInfoUnion Device;
     }
 
-    [StructLayout(LayoutKind.Explicit)]
+    /// <summary>
+    /// The union inside <c>RID_DEVICE_INFO</c>. Only the HID member is used, but the size must
+    /// still be that of the largest member — the keyboard one, at 24 bytes.
+    /// </summary>
+    /// <remarks>
+    /// <c>GetRawInputDeviceInfoW</c> validates <c>RID_DEVICE_INFO.cbSize</c> against the size
+    /// the operating system expects and fails the call outright when it disagrees. Declaring
+    /// the union on the HID member alone makes the structure 24 bytes instead of 32, so every
+    /// <c>RIDI_DEVICEINFO</c> query returned -1 with ERROR_INSUFFICIENT_BUFFER, no PlayStation
+    /// controller was ever identified, and the whole raw HID path was unreachable at runtime.
+    /// </remarks>
+    [StructLayout(LayoutKind.Explicit, Size = 24)]
     internal struct RawInputDeviceInfoUnion
     {
         [FieldOffset(0)]

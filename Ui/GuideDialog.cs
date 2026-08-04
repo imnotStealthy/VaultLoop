@@ -28,6 +28,8 @@ internal sealed class GuideDialog : BrutalistDialog
 
     private readonly GuideStepPanel[] _steps = new GuideStepPanel[Steps.Length];
     private readonly Label _currentStepLabel;
+    private readonly Panel _scrollPanel;
+    private readonly Button _closeButton;
     private readonly bool _darkMode;
 
     internal GuideDialog(bool darkMode) :
@@ -70,6 +72,7 @@ internal sealed class GuideDialog : BrutalistDialog
             BackColor = canvas,
             TabStop = false
         };
+        _scrollPanel = scrollPanel;
         Controls.Add(scrollPanel);
 
         for (var index = 0; index < Steps.Length; index++)
@@ -164,8 +167,10 @@ internal sealed class GuideDialog : BrutalistDialog
             "GOT IT", new Rectangle(582, 654, 110, 36), Typography.StatusDetail,
             Palette.Ink, Palette.Paper);
         closeButton.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
+        _closeButton = closeButton;
         Controls.Add(closeButton);
         AcceptButton = closeButton;
+        CancelButton = closeButton;
         SetCurrentStep(GuideProgressSettings.Load(), persist: false);
     }
 
@@ -178,8 +183,35 @@ internal sealed class GuideDialog : BrutalistDialog
         ClientSize = new Size(
             Math.Min((int)Math.Round(720 * dpiScale), maximumWidth),
             Math.Min((int)Math.Round(700 * dpiScale), maximumHeight));
+        LayoutContent();
         CenterToParent();
         base.OnShown(e);
+    }
+
+    /// <summary>
+    /// Places the scrolling area and the close button against the client size the window
+    /// actually got.
+    /// </summary>
+    /// <remarks>
+    /// The window is clamped to 90 % of the working area, but its content was laid out against
+    /// the unclamped 720 x 700 design size. On a display whose working area is shorter than
+    /// about 700 logical pixels — a 1366 x 768 laptop, or 1080p at a high scaling factor — the
+    /// GOT IT button ended up below the bottom edge and out of reach. At the design size this
+    /// reproduces the original geometry exactly.
+    /// </remarks>
+    private void LayoutContent()
+    {
+        var sideMargin = LogicalToDeviceUnits(28);
+        var bottomMargin = LogicalToDeviceUnits(10);
+        var gap = LogicalToDeviceUnits(8);
+        _closeButton.Location = new Point(
+            ClientSize.Width - _closeButton.Width - sideMargin,
+            ClientSize.Height - _closeButton.Height - bottomMargin);
+        _scrollPanel.Size = new Size(
+            ClientSize.Width - (2 * sideMargin) + SystemInformation.VerticalScrollBarWidth,
+            Math.Max(
+                LogicalToDeviceUnits(120),
+                _closeButton.Top - _scrollPanel.Top - gap));
     }
 
     private static Size GetGuideSize()

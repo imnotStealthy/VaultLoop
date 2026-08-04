@@ -40,6 +40,20 @@ internal sealed class FirewallService
     private const int MaximumConfirmationDelayMilliseconds = 640;
     private static readonly int[] KnownProfiles = [1, 2, 4];
 
+    /// <summary>
+    /// Serializes rule mutations on this instance.
+    /// </summary>
+    /// <remarks>
+    /// The window applies a mutation on a thread-pool thread, so a close, a game-loss restore,
+    /// or the exit path in <see cref="Program"/> can ask for a restore while one is still in
+    /// flight. Two overlapping mutations would race over the same three rule names and make the
+    /// confirmation step read the other one's outcome. <see cref="Monitor"/> is re-entrant,
+    /// which the rollback inside <see cref="SetNoSaveEnabled"/> relies on. Reads stay outside:
+    /// <see cref="GetState"/> is called from the polling thread and must never wait on a
+    /// mutation.
+    /// </remarks>
+    private readonly object _mutationLock = new();
+
     internal FirewallRuleState GetState() => WithPolicy((policy, rules) =>
     {
         var current = InspectRule(rules, RuleName, requireCurrentShape: true);
@@ -70,25 +84,28 @@ internal sealed class FirewallService
                 "A verified Rockstar GTA V process must be running before no-save can be enabled.");
         }
 
-        try
-        {
-            ApplyRuleMutation(enabled, gameExecutablePath);
-            ConfirmState(enabled ? FirewallRuleState.Active : FirewallRuleState.Inactive);
-        }
-        catch (Exception enableException) when (enabled)
+        lock (_mutationLock)
         {
             try
             {
-                SetNoSaveEnabled(false);
+                ApplyRuleMutation(enabled, gameExecutablePath);
+                ConfirmState(enabled ? FirewallRuleState.Active : FirewallRuleState.Inactive);
             }
-            catch (Exception rollbackException)
+            catch (Exception enableException) when (enabled)
             {
-                throw new InvalidOperationException(
-                    "No-save activation failed and VaultLoop could not confirm its rollback. " +
-                    "Use --restore before continuing.",
-                    new AggregateException(enableException, rollbackException));
+                try
+                {
+                    SetNoSaveEnabled(false);
+                }
+                catch (Exception rollbackException)
+                {
+                    throw new InvalidOperationException(
+                        "No-save activation failed and VaultLoop could not confirm its rollback. " +
+                        "Use --restore before continuing.",
+                        new AggregateException(enableException, rollbackException));
+                }
+                throw;
             }
-            throw;
         }
     }
 

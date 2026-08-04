@@ -84,6 +84,14 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetDefaultDllDirectories(int directoryFlags);
 
+    /// <summary>
+    /// The live state of one virtual key. The low-level hook only knows the transitions it was
+    /// given; this reports what the keyboard looks like now, including the transitions it
+    /// missed.
+    /// </summary>
+    [DllImport("user32.dll")]
+    internal static extern short GetAsyncKeyState(int virtualKey);
+
     [DllImport("user32.dll")]
     internal static extern IntPtr GetForegroundWindow();
 

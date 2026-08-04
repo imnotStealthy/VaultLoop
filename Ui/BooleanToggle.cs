@@ -93,7 +93,7 @@ internal sealed class BooleanToggle : Control
 
         using var shadowBrush = new SolidBrush(Palette.Ink);
         using var trackBrush = new SolidBrush(
-            !IsStateKnown ? Palette.Yellow : Checked ? Palette.HotPink : Palette.Acid);
+            GetTrackColor(Enabled, IsStateKnown, IsRecoveryMode, Checked));
         using var knobBrush = new SolidBrush(Palette.Paper);
         using var borderPen = new Pen(Palette.Ink, 4F);
         var labelFont = Typography.StatusTitle;
@@ -152,6 +152,12 @@ internal sealed class BooleanToggle : Control
             ToggleRequested?.Invoke(this, EventArgs.Empty);
         }
     }
+
+    internal static Color GetTrackColor(
+        bool enabled, bool stateKnown, bool recoveryMode, bool isChecked) =>
+        !enabled && stateKnown && !recoveryMode
+            ? SystemColors.ControlDark
+            : !stateKnown ? Palette.Yellow : isChecked ? Palette.HotPink : Palette.Acid;
 
     private sealed class BooleanToggleAccessibleObject(BooleanToggle owner)
         : ControlAccessibleObject(owner)

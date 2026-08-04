@@ -7,13 +7,14 @@ and an optional HUD.
 
 ## Requirements
 
-- Windows x64. TODO: Record the minimum supported Windows release.
+- Windows 10 version 1703 x64 or later. `app.manifest` declares `PerMonitorV2`
+  DPI awareness, which earlier releases ignore.
 - .NET Framework 4.8.
 - A local `GTA5.exe` or `GTA5_Enhanced.exe` with a valid Rockstar Authenticode signature.
 - Administrator approval when VaultLoop changes or restores the firewall rule.
-- For source builds: Git, the .NET SDK, and the 64-bit .NET Framework 4.8
-  reference assemblies.
-- TODO: Record the minimum supported .NET SDK version for source builds.
+- For source builds: Git, .NET SDK 8.0 or later, and the 64-bit .NET Framework
+  4.8 reference assemblies. The project sets `LangVersion` to `preview` and uses
+  C# 12 collection expressions and primary constructors.
 
 ## Install
 
@@ -59,11 +60,16 @@ A controller shortcut contains exactly two or three buttons. Hold the combinatio
 for 500 ms, then release it to toggle no-save. Xbox controllers use XInput.
 DualShock 4, DualSense, and DualSense Edge use Windows Raw Input over USB or Bluetooth.
 
-Use **HUD ON** or **HUD OFF** to control the status HUD. The HUD appears only while
-a verified GTA window is in the foreground.
+Use **HUD ON** or **HUD OFF** to control the status HUD. The choice is stored and
+restored at the next launch. The HUD appears only while a verified GTA window is
+in the foreground.
 
 Minimizing VaultLoop hides it in the system tray. The tray menu controls the
 window, HUD, **START WITH WINDOWS**, and **EXIT & RESTORE**. Windows startup opens it in the tray.
+
+[docs/ACTIVITY_ROTATION_GUIDE.md](docs/ACTIVITY_ROTATION_GUIDE.md) describes activity
+rotation. [docs/CONTROLLER_SHORTCUT_DESIGN.md](docs/CONTROLLER_SHORTCUT_DESIGN.md)
+documents the controller input design and its accepted behavior.
 
 ### Restore the firewall rule
 
@@ -84,8 +90,10 @@ VaultLoop.exe --diagnose
 ```
 
 The command reports the configured blocked set, the managed firewall-rule state,
-and TCP endpoints owned by the verified GTA process. It does not change the
-firewall.
+TCP endpoints owned by the verified GTA process, and the controller shortcut. When
+an Xbox controller shortcut is configured, it samples that controller for four
+seconds and prints every combination it reads, so a combination that does not match
+is visible. It does not change the firewall.
 
 ### Validate a source build
 
@@ -108,8 +116,10 @@ File settings are stored under `%LOCALAPPDATA%\VaultLoop`.
 | `shortcut.txt` | `CTRL+SHIFT+F8` | Stores the keyboard shortcut. |
 | `controller-shortcut.txt` | Disabled | Stores the controller and its exact button combination. |
 | `theme.txt` | Light | Stores `light` or `dark`. |
+| `hud.txt` | On | Stores `on` or `off` for the status HUD. |
 | `guide-step.txt` | Step 1 | Stores the current **HOW TO USE** page. |
 | `endpoints.txt` | `192.81.241.171` | Replaces the built-in blocked set at the next launch. |
+| `activity.log` | Empty | Written by VaultLoop. Records the last 400 firewall decisions and failures. |
 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\VaultLoop` | Absent | Starts the current executable with `--startup`. |
 
 `endpoints.txt` accepts one IPv4, IPv6, or CIDR prefix per line. Lines beginning
@@ -142,8 +152,17 @@ when an entry is invalid or outside those allocations.
   registry command pointing to the old path. Disable and re-enable the option.
 - Controllers not exposed through the supported XInput or Sony Raw Input paths
   are not configurable.
+- A controller shortcut must be pressed exactly: an extra button held at the same
+  time prevents it. An analog trigger counts as a button above 30 of 255. A trigger
+  that never reads below that value is treated as resting and is ignored, which
+  also means it cannot be used in a shortcut on that controller.
+- A controller shortcut is bound to one device identity. Moving an Xbox
+  controller to another XInput slot, or moving a PlayStation controller between
+  USB and Bluetooth, requires configuring the shortcut again.
+- The HUD is a normal top-most window. It does not draw over a game running in
+  exclusive fullscreen.
 - Unsigned builds can trigger a Windows SmartScreen warning.
 
 ## License
 
-This repository does not currently declare a software license.
+MIT. See [LICENSE](LICENSE).

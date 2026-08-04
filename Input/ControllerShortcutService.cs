@@ -26,6 +26,10 @@ internal sealed class ControllerShortcutService : IDisposable
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<IntPtr, RawHidDevice> _rawDevices = new();
 
+    /// <summary>Per device, the analog inputs currently treated as resting, not pressed.</summary>
+    private readonly Dictionary<string, ControllerButtons> _stuckAnalogInputs =
+        new(StringComparer.OrdinalIgnoreCase);
+
     private ControllerShortcut? _shortcut;
     private ControllerCaptureSnapshot _captureSnapshot =
         new("NOT CONFIGURED", null, complete: false);
@@ -36,6 +40,7 @@ internal sealed class ControllerShortcutService : IDisposable
     private ControllerButtons _runtimeCandidate;
     private long _runtimeHoldStarted;
     private bool _runtimeLatched;
+    private bool _runtimeRefusalReported;
     private bool _capturing;
     private bool _installed;
     private bool _rawInputRegistered;
@@ -54,6 +59,13 @@ internal sealed class ControllerShortcutService : IDisposable
 
     internal event EventHandler? Pressed;
 
+    /// <summary>
+    /// Raised when the configured combination was held for its full duration and the gate
+    /// refused it. Without it a refused hold is indistinguishable from buttons that were never
+    /// read at all, which is the whole difficulty of diagnosing a controller shortcut.
+    /// </summary>
+    internal event EventHandler? Refused;
+
     internal ControllerShortcut? Shortcut
     {
         get
@@ -70,6 +82,7 @@ internal sealed class ControllerShortcutService : IDisposable
                 _shortcut = value;
                 ResetRuntimeState();
             }
+            UpdatePollTimer();
         }
     }
 
@@ -104,8 +117,27 @@ internal sealed class ControllerShortcutService : IDisposable
             _installed = true;
             _rawInputRegistered = rawInputRegistered;
         }
-        _pollTimer.Change(0, PollIntervalMilliseconds);
+        UpdatePollTimer();
         return rawInputRegistered;
+    }
+
+    /// <summary>
+    /// Starts or stops the poll timer. Polling has something to decide only while a capture is
+    /// running or a shortcut is configured. Outside those two cases the timer used to keep
+    /// waking the machine 33 times a second and sweeping four XInput slots for nothing —
+    /// measured at 256 us per sweep, 0.85 % of one core, for a feature that is disabled by
+    /// default.
+    /// </summary>
+    private void UpdatePollTimer()
+    {
+        bool pollingNeeded;
+        lock (_sync)
+        {
+            pollingNeeded = _installed && (_capturing || _shortcut is not null);
+        }
+        _pollTimer.Change(
+            pollingNeeded ? 0 : Timeout.Infinite,
+            pollingNeeded ? PollIntervalMilliseconds : Timeout.Infinite);
     }
 
     internal void Uninstall()
@@ -120,6 +152,7 @@ internal sealed class ControllerShortcutService : IDisposable
             _capturing = false;
             _captureDeviceId = null;
             _devices.Clear();
+            _stuckAnalogInputs.Clear();
             foreach (var device in _rawDevices.Values)
             {
                 device.Dispose();
@@ -168,6 +201,7 @@ internal sealed class ControllerShortcutService : IDisposable
                 null, complete: false);
             ResetRuntimeState();
         }
+        UpdatePollTimer();
     }
 
     internal void CancelCapture()
@@ -180,6 +214,7 @@ internal sealed class ControllerShortcutService : IDisposable
             _captureHoldStarted = 0;
             _captureAwaitingRelease = false;
         }
+        UpdatePollTimer();
     }
 
     internal void ProcessRawInput(IntPtr rawInputHandle)
@@ -267,10 +302,12 @@ internal sealed class ControllerShortcutService : IDisposable
             {
                 _rawDevices.Remove(deviceHandle);
                 _devices.Remove(removed.DeviceId);
+                _stuckAnalogInputs.Remove(removed.DeviceId);
                 HandleDisconnectedDevice(removed.DeviceId);
             }
         }
         removed?.Dispose();
+        UpdatePollTimer();
     }
 
     internal static ControllerButtons MapXInputButtons(
@@ -352,8 +389,26 @@ internal sealed class ControllerShortcutService : IDisposable
 
         try
         {
-            PollXInput();
-            bool raisePressed;
+            // XInput is swept only when an Xbox device can actually take part: during capture,
+            // or for a configured XInput shortcut. A DualShock or DualSense shortcut is fed by
+            // raw input messages instead and needs no sweep at all.
+            bool pollXInput;
+            lock (_sync)
+            {
+                if (!_installed)
+                {
+                    return;
+                }
+                pollXInput = _capturing ||
+                             _shortcut?.DeviceKind == ControllerDeviceKind.XInput;
+            }
+            if (pollXInput)
+            {
+                PollXInput();
+            }
+
+            RuntimeOutcome outcome;
+            bool keepPolling;
             lock (_sync)
             {
                 if (!_installed)
@@ -361,13 +416,28 @@ internal sealed class ControllerShortcutService : IDisposable
                     return;
                 }
                 var timestamp = Stopwatch.GetTimestamp();
-                raisePressed = _capturing
-                    ? EvaluateCapture(timestamp)
-                    : EvaluateRuntime(timestamp);
+                if (_capturing)
+                {
+                    EvaluateCapture(timestamp);
+                    outcome = RuntimeOutcome.None;
+                }
+                else
+                {
+                    outcome = EvaluateRuntime(timestamp);
+                }
+                keepPolling = _capturing || _shortcut is not null;
             }
-            if (raisePressed)
+            if (!keepPolling)
+            {
+                _pollTimer.Change(Timeout.Infinite, Timeout.Infinite);
+            }
+            if (outcome == RuntimeOutcome.Pressed)
             {
                 Pressed?.Invoke(this, EventArgs.Empty);
+            }
+            else if (outcome == RuntimeOutcome.Refused)
+            {
+                Refused?.Invoke(this, EventArgs.Empty);
             }
         }
         finally
@@ -411,17 +481,18 @@ internal sealed class ControllerShortcutService : IDisposable
                 {
                     _devices[deviceId] = new DeviceState(
                         deviceId, ControllerDeviceKind.XInput,
-                        MapXInputButtons(state.Gamepad));
+                        ApplyStuckAnalogFilter(deviceId, MapXInputButtons(state.Gamepad)));
                 }
                 else if (_devices.Remove(deviceId))
                 {
+                    _stuckAnalogInputs.Remove(deviceId);
                     HandleDisconnectedDevice(deviceId);
                 }
             }
         }
     }
 
-    private bool EvaluateCapture(long timestamp)
+    private void EvaluateCapture(long timestamp)
     {
         if (_captureDeviceId is null)
         {
@@ -441,7 +512,7 @@ internal sealed class ControllerShortcutService : IDisposable
         if (_captureDeviceId is null ||
             !_devices.TryGetValue(_captureDeviceId, out var selectedDevice))
         {
-            return false;
+            return;
         }
 
         var buttons = selectedDevice.Buttons;
@@ -451,7 +522,7 @@ internal sealed class ControllerShortcutService : IDisposable
                 "RELEASE ALL BUTTONS", null, complete: false);
             if (buttons != ControllerButtons.None)
             {
-                return false;
+                return;
             }
 
             var captured = new ControllerShortcut(
@@ -459,7 +530,7 @@ internal sealed class ControllerShortcutService : IDisposable
             _captureSnapshot = new ControllerCaptureSnapshot(
                 captured.Format(), captured, complete: true);
             _capturing = false;
-            return false;
+            return;
         }
 
         var buttonCount = ControllerShortcut.CountInputs(buttons);
@@ -468,21 +539,21 @@ internal sealed class ControllerShortcutService : IDisposable
             ResetCaptureCandidate();
             _captureSnapshot = new ControllerCaptureSnapshot(
                 "PRESS 2 OR 3 BUTTONS", null, complete: false);
-            return false;
+            return;
         }
         if (buttonCount == 1)
         {
             ResetCaptureCandidate();
             _captureSnapshot = new ControllerCaptureSnapshot(
                 "ADD ANOTHER BUTTON", null, complete: false);
-            return false;
+            return;
         }
         if (buttonCount > 3)
         {
             ResetCaptureCandidate();
             _captureSnapshot = new ControllerCaptureSnapshot(
                 "USE ONLY 2 OR 3 BUTTONS", null, complete: false);
-            return false;
+            return;
         }
 
         if (_captureCandidate != buttons)
@@ -497,23 +568,22 @@ internal sealed class ControllerShortcutService : IDisposable
         {
             _captureSnapshot = new ControllerCaptureSnapshot(
                 $"{formatted}  //  HOLD", null, complete: false);
-            return false;
+            return;
         }
 
         _captureAwaitingRelease = true;
         _captureSnapshot = new ControllerCaptureSnapshot(
             "RELEASE ALL BUTTONS", null, complete: false);
-        return false;
     }
 
-    private bool EvaluateRuntime(long timestamp)
+    private RuntimeOutcome EvaluateRuntime(long timestamp)
     {
         if (_shortcut is null ||
             !_devices.TryGetValue(_shortcut.DeviceId, out var device) ||
             device.DeviceKind != _shortcut.DeviceKind)
         {
             ResetRuntimeState();
-            return false;
+            return RuntimeOutcome.None;
         }
 
         if (_runtimeLatched)
@@ -522,38 +592,52 @@ internal sealed class ControllerShortcutService : IDisposable
             {
                 _runtimeLatched = false;
             }
-            return false;
+            return RuntimeOutcome.None;
         }
 
         if (!ControllerShortcut.IsExactCombination(
                 device.Buttons, _shortcut.Buttons))
         {
-            _runtimeCandidate = ControllerButtons.None;
-            _runtimeHoldStarted = 0;
-            return false;
+            ResetRuntimeTiming();
+            return RuntimeOutcome.None;
         }
 
         if (_runtimeCandidate != device.Buttons)
         {
             _runtimeCandidate = device.Buttons;
             _runtimeHoldStarted = timestamp;
-            return false;
+            return RuntimeOutcome.None;
         }
         if (ElapsedMilliseconds(_runtimeHoldStarted, timestamp) < HoldMilliseconds)
         {
-            return false;
+            return RuntimeOutcome.None;
         }
 
         if (!_triggerGate.CanFire(_canTrigger))
         {
+            // The hold restarts, so the shortcut fires as soon as the missing condition is
+            // met without the user releasing anything. The refusal itself is reported once
+            // per hold: at 30 ms per poll it would otherwise repeat 33 times a second.
             _runtimeHoldStarted = timestamp;
-            return false;
+            if (_runtimeRefusalReported)
+            {
+                return RuntimeOutcome.None;
+            }
+            _runtimeRefusalReported = true;
+            return RuntimeOutcome.Refused;
         }
 
         _runtimeLatched = true;
-        _runtimeCandidate = ControllerButtons.None;
-        _runtimeHoldStarted = 0;
-        return true;
+        ResetRuntimeTiming();
+        return RuntimeOutcome.Pressed;
+    }
+
+    /// <summary>What one poll of a configured shortcut decided.</summary>
+    private enum RuntimeOutcome
+    {
+        None,
+        Pressed,
+        Refused
     }
 
     private void UpdateDevice(
@@ -561,8 +645,43 @@ internal sealed class ControllerShortcutService : IDisposable
     {
         lock (_sync)
         {
-            _devices[deviceId] = new DeviceState(deviceId, deviceKind, buttons);
+            _devices[deviceId] = new DeviceState(
+                deviceId, deviceKind, ApplyStuckAnalogFilter(deviceId, buttons));
         }
+    }
+
+    /// <summary>
+    /// Drops the analog inputs this device is resting on. A trigger is reported as a button
+    /// once it passes its threshold, and a worn one can sit above it with nothing touching it —
+    /// measured at 53 of 255 on the controller this was found with. Every combination read from
+    /// that device then carries a trigger the user is not pressing, the exact match never holds,
+    /// and the shortcut can never fire. A trigger stops being treated as resting the moment it
+    /// is read below the threshold.
+    /// </summary>
+    private ControllerButtons ApplyStuckAnalogFilter(
+        string deviceId, ControllerButtons buttons)
+    {
+        var previousStuck = _stuckAnalogInputs.TryGetValue(deviceId, out var known)
+            ? known
+            : (ControllerButtons?)null;
+        var filtered = TrackStuckAnalogInputs(buttons, previousStuck, out var stuck);
+        _stuckAnalogInputs[deviceId] = stuck;
+        return filtered;
+    }
+
+    /// <summary>
+    /// Reports the buttons of one reading with the resting analog inputs removed, and carries
+    /// the resting set forward. <paramref name="previousStuck"/> is <c>null</c> for the first
+    /// reading of a device, where anything already above its threshold is taken to be resting.
+    /// </summary>
+    internal static ControllerButtons TrackStuckAnalogInputs(
+        ControllerButtons buttons, ControllerButtons? previousStuck,
+        out ControllerButtons stuck)
+    {
+        var analog = buttons &
+            (ControllerButtons.LeftTrigger | ControllerButtons.RightTrigger);
+        stuck = previousStuck is null ? analog : previousStuck.Value & analog;
+        return buttons & ~stuck;
     }
 
     private bool TryGetRawDevice(IntPtr deviceHandle, out RawHidDevice device)
@@ -621,6 +740,7 @@ internal sealed class ControllerShortcutService : IDisposable
                 var deviceId = $"xinput:{slot}";
                 if (_devices.Remove(deviceId))
                 {
+                    _stuckAnalogInputs.Remove(deviceId);
                     HandleDisconnectedDevice(deviceId);
                 }
             }
@@ -644,6 +764,7 @@ internal sealed class ControllerShortcutService : IDisposable
     {
         _runtimeCandidate = ControllerButtons.None;
         _runtimeHoldStarted = 0;
+        _runtimeRefusalReported = false;
     }
 
     private static long ElapsedMilliseconds(long started, long current) =>
