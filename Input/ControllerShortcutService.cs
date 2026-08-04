@@ -136,9 +136,13 @@ internal sealed class ControllerShortcutService : IDisposable
         }
     }
 
-    /// <summary>Reads polling state and changes the timer as one synchronized operation.</summary>
+    /// <summary>
+    /// Reads polling state and changes the timer as one synchronized operation. The caller must
+    /// hold <see cref="_sync"/>.
+    /// </summary>
     private void UpdatePollTimerLocked()
     {
+        Debug.Assert(Monitor.IsEntered(_sync));
         var pollingNeeded = _installed && (_capturing || _shortcut is not null);
         _pollTimer.Change(
             pollingNeeded ? 0 : Timeout.Infinite,
