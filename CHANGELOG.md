@@ -22,6 +22,10 @@
   as resting rather than pressed.
 - A controller combination held for its full duration and refused by the gate now
   reports the missing condition, like the keyboard shortcut.
+- Fixed a controller polling race that could stop the timer just after a shortcut
+  was configured or capture began.
+- Disarming the keyboard shortcut now clears its refusal latch, so the next refused
+  press can report its missing condition again.
 - `--diagnose` reports the configured controller shortcut, the connected XInput
   controllers, their analog trigger values, and a four-second sample of what the
   application actually reads from the configured one.

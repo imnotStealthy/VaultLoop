@@ -130,11 +130,16 @@ internal sealed class ControllerShortcutService : IDisposable
     /// </summary>
     private void UpdatePollTimer()
     {
-        bool pollingNeeded;
         lock (_sync)
         {
-            pollingNeeded = _installed && (_capturing || _shortcut is not null);
+            UpdatePollTimerLocked();
         }
+    }
+
+    /// <summary>Reads polling state and changes the timer as one synchronized operation.</summary>
+    private void UpdatePollTimerLocked()
+    {
+        var pollingNeeded = _installed && (_capturing || _shortcut is not null);
         _pollTimer.Change(
             pollingNeeded ? 0 : Timeout.Infinite,
             pollingNeeded ? PollIntervalMilliseconds : Timeout.Infinite);
@@ -142,12 +147,12 @@ internal sealed class ControllerShortcutService : IDisposable
 
     internal void Uninstall()
     {
-        _pollTimer.Change(Timeout.Infinite, Timeout.Infinite);
         bool unregisterRawInput;
         lock (_sync)
         {
-            unregisterRawInput = _rawInputRegistered;
             _installed = false;
+            _pollTimer.Change(Timeout.Infinite, Timeout.Infinite);
+            unregisterRawInput = _rawInputRegistered;
             _rawInputRegistered = false;
             _capturing = false;
             _captureDeviceId = null;
@@ -408,7 +413,6 @@ internal sealed class ControllerShortcutService : IDisposable
             }
 
             RuntimeOutcome outcome;
-            bool keepPolling;
             lock (_sync)
             {
                 if (!_installed)
@@ -425,11 +429,13 @@ internal sealed class ControllerShortcutService : IDisposable
                 {
                     outcome = EvaluateRuntime(timestamp);
                 }
-                keepPolling = _capturing || _shortcut is not null;
-            }
-            if (!keepPolling)
-            {
-                _pollTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                if (!_capturing && _shortcut is null)
+                {
+                    // Re-read the state after the callback's work. A setter may have restarted
+                    // polling while this callback was between ticks; stop only when the current
+                    // state still says no polling is required, never restart on every tick.
+                    UpdatePollTimerLocked();
+                }
             }
             if (outcome == RuntimeOutcome.Pressed)
             {

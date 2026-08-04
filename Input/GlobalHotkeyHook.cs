@@ -134,6 +134,7 @@ internal sealed class GlobalHotkeyHook
         // or Ctrl+Alt+Del is up — would otherwise leave the latch set for the rest of the
         // session, and every later press was swallowed without toggling anything.
         _shortcutDown = false;
+        _refusalReported = false;
         _triggerGate.Disarm();
     }
 
